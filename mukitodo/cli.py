@@ -11,13 +11,13 @@ def main(
 ):
     if ctx.invoked_subcommand is None:
         if not no_view:
-            from mukitodo.view import run
+            from mukitodo.tui import run
             run()
 
 
 @app.command()
 def view():
-    from mukitodo.view import run
+    from mukitodo.tui import run
     run()
 
 

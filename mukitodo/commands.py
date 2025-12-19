@@ -1,192 +1,163 @@
-from dataclasses import dataclass
 from mukitodo.services import TrackService, ProjectService, TodoItemService
+from mukitodo.actions import Result
 
 
-@dataclass
-class Context:
-    view: str = "main"
-    current_track: str | None = None
-    current_project: str | None = None
-
-
-@dataclass
-class Result:
-    success: bool | None
-    message: str
-    action: str | None = None
-    target: str | None = None
-
-
-def execute(command: str, ctx: Context) -> Result:
+def execute(
+    command: str,
+    level: str,
+    current_track: str | None = None,
+    current_project: str | None = None,
+) -> Result:
     parts = command.strip().split(maxsplit=1)
     if not parts:
-        return Result(None, "")
+        return Result("", None)
 
     cmd = parts[0].lower()
     arg = parts[1] if len(parts) > 1 else ""
 
     if cmd in ("q", "quit"):
-        return Result(None, "", action="quit")
+        return Result("Goodbye", None)
 
     if cmd in ("h", "?", "help"):
-        return _help(ctx)
+        return _help(level)
 
     if cmd in ("select", "enter"):
-        return _select(arg, ctx)
+        return _select(arg, level, current_track)
 
     if cmd == "back":
-        return _back(ctx)
-
-    if cmd == "add":
-        return _add(arg, ctx)
-
-    if cmd == "list":
-        return _list(ctx)
+        return _back(level)
 
     if cmd == "delete":
-        return _delete(arg, ctx)
+        return _delete(arg, level, current_track, current_project)
 
     if cmd == "done":
-        return _done(arg, ctx)
+        return _done(arg, level, current_project)
 
     if cmd == "undo":
-        return _undo(arg, ctx)
+        return _undo(arg, level, current_project)
 
-    return Result(False, f"Unknown command: {cmd}")
-
-
-def _help(ctx: Context) -> Result:
-    if ctx.view == "main":
-        if ctx.current_track:
-            msg = "add <name> | delete <name> | select <name> | back | list | quit"
+    if cmd.isdigit():
+        if level == "items":
+            return _done(cmd, level, current_project)
         else:
-            msg = "add <name> | delete <name> | select <name> | list | quit"
+            return _select(cmd, level, current_track)
+
+    return Result(f"Unknown command: {cmd}", False)
+
+
+def _help(level: str) -> Result:
+    if level == "tracks":
+        msg = "add <name> | delete <name> | select <name> | list | quit"
+    elif level == "projects":
+        msg = "add <name> | delete <name> | select <name> | back | list | quit"
     else:
         msg = "add <content> | delete <n> | done <n> | undo <n> | back | list | quit"
-    return Result(True, msg)
+    return Result(msg, True)
 
 
-def _select(name: str, ctx: Context) -> Result:
+def _select(name: str, level: str, current_track: str | None) -> Result:
     if not name:
-        return Result(False, "Usage: select <name>")
+        return Result("Usage: select <name|index>", False)
 
-    if ctx.view == "main":
-        if not ctx.current_track:
-            track_svc = TrackService()
-            track = track_svc.get_by_name(name)
-            if track:
-                return Result(True, f"Entered track: {name}", action="select_track", target=name)
-            proj_svc = ProjectService()
-            proj = proj_svc.get_by_name(name)
-            if proj:
-                return Result(True, f"Entered project: {name}", action="select_project", target=name)
-            return Result(False, f"'{name}' not found")
-        else:
-            proj_svc = ProjectService()
-            proj = proj_svc.get_by_name(name)
-            if proj and proj.track.name == ctx.current_track:
-                return Result(True, f"Entered project: {name}", action="select_project", target=name)
-            return Result(False, f"Project '{name}' not found in {ctx.current_track}")
-    else:
-        return Result(False, "Already in project view")
-
-
-def _back(ctx: Context) -> Result:
-    if ctx.view == "project":
-        return Result(True, "Back to main view", action="back_to_main")
-    elif ctx.current_track:
-        return Result(True, "Back to tracks", action="back_to_tracks")
-    else:
-        return Result(False, "Already at top level")
-
-
-def _add(name: str, ctx: Context) -> Result:
-    if not name:
-        return Result(False, "Usage: add <name>")
-
-    if ctx.view == "main":
-        if not ctx.current_track:
-            track_svc = TrackService()
-            track = track_svc.add(name)
-            return Result(True, f"Track '{track.name}' created")
-        else:
-            proj_svc = ProjectService()
-            proj = proj_svc.add(ctx.current_track, name)
-            if proj:
-                return Result(True, f"Project '{proj.name}' created")
-            return Result(False, f"Failed to create project")
-    else:
-        item_svc = TodoItemService()
-        item = item_svc.add(ctx.current_project, name)
-        if item:
-            return Result(True, f"Item added")
-        return Result(False, "Failed to add item")
-
-
-def _list(ctx: Context) -> Result:
-    if ctx.view == "main":
-        if not ctx.current_track:
-            track_svc = TrackService()
+    if level == "tracks":
+        track_svc = TrackService()
+        if name.isdigit():
             tracks = track_svc.list_all()
-            if tracks:
-                return Result(True, ", ".join(t.name for t in tracks))
-            return Result(True, "No tracks")
-        else:
-            proj_svc = ProjectService()
-            projects = proj_svc.list_by_track(ctx.current_track)
-            if projects:
-                return Result(True, ", ".join(p.name for p in projects))
-            return Result(True, "No projects")
-    else:
-        item_svc = TodoItemService()
-        items = item_svc.list_by_project(ctx.current_project)
-        if items:
-            lines = [f"{'✓' if i.status == 'completed' else '○'} {i.content}" for i in items]
-            return Result(True, "\n".join(lines))
-        return Result(True, "No items")
+            idx = int(name) - 1
+            if 0 <= idx < len(tracks):
+                return Result(f"Use arrow keys to select track {name}", False)
+            return Result(f"Track index {name} out of range", False)
+        
+        track = track_svc.get_by_name(name)
+        if track:
+            return Result(f"Use arrow keys to select track '{name}'", False)
+        return Result(f"Track '{name}' not found", False)
+    
+    elif level == "projects":
+        proj_svc = ProjectService()
+        if name.isdigit():
+            projects = proj_svc.list_by_track(current_track) if current_track else []
+            idx = int(name) - 1
+            if 0 <= idx < len(projects):
+                return Result(f"Use arrow keys to select project {name}", False)
+            return Result(f"Project index {name} out of range", False)
+        
+        proj = proj_svc.get_by_name(name)
+        if proj:
+            return Result(f"Use arrow keys to select project '{name}'", False)
+        return Result(f"Project '{name}' not found", False)
+    
+    return Result("Cannot select in items view", False)
 
 
-def _delete(name: str, ctx: Context) -> Result:
+def _back(level: str) -> Result:
+    if level == "items":
+        return Result("Use arrow left to go back", False)
+    elif level == "projects":
+        return Result("Use arrow left to go back", False)
+    return Result("Already at top level", False)
+
+
+def _delete(name: str, level: str, current_track: str | None, current_project: str | None) -> Result:
     if not name:
-        return Result(False, "Usage: delete <name>")
+        return Result("Usage: delete <name|index>", False)
 
-    if ctx.view == "main":
-        if not ctx.current_track:
-            track_svc = TrackService()
-            if track_svc.delete(name):
-                return Result(True, f"Track '{name}' deleted")
-            return Result(False, f"Track '{name}' not found")
-        else:
-            proj_svc = ProjectService()
-            if proj_svc.delete(name):
-                return Result(True, f"Project '{name}' deleted")
-            return Result(False, f"Project '{name}' not found")
+    if level == "tracks":
+        track_svc = TrackService()
+        if name.isdigit():
+            tracks = track_svc.list_all()
+            idx = int(name) - 1
+            if 0 <= idx < len(tracks):
+                track_name = tracks[idx].name
+                if track_svc.delete(track_name):
+                    return Result(f"Track '{track_name}' deleted", True)
+            return Result(f"Track index {name} out of range", False)
+        
+        if track_svc.delete(name):
+            return Result(f"Track '{name}' deleted", True)
+        return Result(f"Track '{name}' not found", False)
+    
+    elif level == "projects":
+        proj_svc = ProjectService()
+        if name.isdigit():
+            projects = proj_svc.list_by_track(current_track) if current_track else []
+            idx = int(name) - 1
+            if 0 <= idx < len(projects):
+                proj_name = projects[idx].name
+                if proj_svc.delete(proj_name):
+                    return Result(f"Project '{proj_name}' deleted", True)
+            return Result(f"Project index {name} out of range", False)
+        
+        if proj_svc.delete(name):
+            return Result(f"Project '{name}' deleted", True)
+        return Result(f"Project '{name}' not found", False)
+    
     else:
         item_svc = TodoItemService()
-        if item_svc.delete(ctx.current_project, name):
-            return Result(True, "Item deleted")
-        return Result(False, "Item not found")
+        if item_svc.delete(current_project, name) if current_project else False:
+            return Result("Item deleted", True)
+        return Result("Item not found", False)
 
 
-def _done(identifier: str, ctx: Context) -> Result:
-    if ctx.view != "project":
-        return Result(False, "done only works in project view")
+def _done(identifier: str, level: str, current_project: str | None) -> Result:
+    if level != "items":
+        return Result("done only works in items view", False)
     if not identifier:
-        return Result(False, "Usage: done <name|index>")
+        return Result("Usage: done <name|index>", False)
 
     item_svc = TodoItemService()
-    if item_svc.mark_done(ctx.current_project, identifier):
-        return Result(True, "Marked as done")
-    return Result(False, "Item not found")
+    if item_svc.mark_done(current_project, identifier) if current_project else False:
+        return Result("Marked as done", True)
+    return Result("Item not found", False)
 
 
-def _undo(identifier: str, ctx: Context) -> Result:
-    if ctx.view != "project":
-        return Result(False, "undo only works in project view")
+def _undo(identifier: str, level: str, current_project: str | None) -> Result:
+    if level != "items":
+        return Result("undo only works in items view", False)
     if not identifier:
-        return Result(False, "Usage: undo <name|index>")
+        return Result("Usage: undo <name|index>", False)
 
     item_svc = TodoItemService()
-    if item_svc.mark_undo(ctx.current_project, identifier):
-        return Result(True, "Marked as active")
-    return Result(False, "Item not found")
+    if item_svc.mark_undo(current_project, identifier) if current_project else False:
+        return Result("Marked as active", True)
+    return Result("Item not found", False)

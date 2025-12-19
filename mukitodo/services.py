@@ -14,6 +14,9 @@ class TrackService:
         self.session.commit()
         return track
 
+    def get_by_id(self, track_id: int) -> Track | None:
+        return self.session.query(Track).filter_by(id=track_id).first()
+
     def get_by_name(self, name: str) -> Track | None:
         return self.session.query(Track).filter_by(name=name).first()
 
@@ -24,6 +27,22 @@ class TrackService:
         track = self.session.query(Track).filter_by(name=name).first()
         if track:
             self.session.delete(track)
+            self.session.commit()
+            return True
+        return False
+
+    def delete_by_id(self, track_id: int) -> bool:
+        track = self.session.query(Track).filter_by(id=track_id).first()
+        if track:
+            self.session.delete(track)
+            self.session.commit()
+            return True
+        return False
+    
+    def rename(self, track_id: int, new_name: str) -> bool:
+        track = self.session.query(Track).filter_by(id=track_id).first()
+        if track:
+            track.name = new_name
             self.session.commit()
             return True
         return False
@@ -43,11 +62,29 @@ class ProjectService:
         self.session.commit()
         return project
 
+    def add_by_track_id(self, track_id: int, project_name: str) -> Project | None:
+        track = self.session.query(Track).filter_by(id=track_id).first()
+        if not track:
+            return None
+        project = Project(name=project_name, track_id=track.id)
+        self.session.add(project)
+        self.session.commit()
+        return project
+
+    def get_by_id(self, project_id: int) -> Project | None:
+        return self.session.query(Project).filter_by(id=project_id).first()
+
+    def get_by_name(self, name: str) -> Project | None:
+        return self.session.query(Project).filter_by(name=name).first()
+
     def list_by_track(self, track_name: str) -> list[Project]:
         track = self.session.query(Track).filter_by(name=track_name).first()
         if not track:
             return []
         return self.session.query(Project).filter_by(track_id=track.id).all()
+
+    def list_by_track_id(self, track_id: int) -> list[Project]:
+        return self.session.query(Project).filter_by(track_id=track_id).all()
 
     def list_all(self) -> list[Project]:
         return self.session.query(Project).all()
@@ -60,8 +97,21 @@ class ProjectService:
             return True
         return False
 
-    def get_by_name(self, name: str) -> Project | None:
-        return self.session.query(Project).filter_by(name=name).first()
+    def delete_by_id(self, project_id: int) -> bool:
+        project = self.session.query(Project).filter_by(id=project_id).first()
+        if project:
+            self.session.delete(project)
+            self.session.commit()
+            return True
+        return False
+    
+    def rename(self, project_id: int, new_name: str) -> bool:
+        project = self.session.query(Project).filter_by(id=project_id).first()
+        if project:
+            project.name = new_name
+            self.session.commit()
+            return True
+        return False
 
 
 class TodoItemService:
@@ -78,11 +128,26 @@ class TodoItemService:
         self.session.commit()
         return item
 
+    def add_by_project_id(self, project_id: int, content: str) -> TodoItem | None:
+        project = self.session.query(Project).filter_by(id=project_id).first()
+        if not project:
+            return None
+        item = TodoItem(content=content, project_id=project.id)
+        self.session.add(item)
+        self.session.commit()
+        return item
+
+    def get_by_id(self, item_id: int) -> TodoItem | None:
+        return self.session.query(TodoItem).filter_by(id=item_id).first()
+
     def list_by_project(self, project_name: str) -> list[TodoItem]:
         project = self.session.query(Project).filter_by(name=project_name).first()
         if not project:
             return []
         return self.session.query(TodoItem).filter_by(project_id=project.id).all()
+
+    def list_by_project_id(self, project_id: int) -> list[TodoItem]:
+        return self.session.query(TodoItem).filter_by(project_id=project_id).all()
 
     def get_by_content_or_index(self, project_name: str, identifier: str) -> TodoItem | None:
         items = self.list_by_project(project_name)
@@ -116,10 +181,39 @@ class TodoItemService:
             return True
         return False
 
+    def toggle_by_id(self, item_id: int) -> bool:
+        item = self.session.query(TodoItem).filter_by(id=item_id).first()
+        if not item:
+            return False
+        if item.status == "completed":
+            item.status = "active"
+            item.completed_at = None
+        else:
+            item.status = "completed"
+            item.completed_at = datetime.now()
+        self.session.commit()
+        return True
+
     def delete(self, project_name: str, identifier: str) -> bool:
         item = self.get_by_content_or_index(project_name, identifier)
         if item:
             self.session.delete(item)
+            self.session.commit()
+            return True
+        return False
+
+    def delete_by_id(self, item_id: int) -> bool:
+        item = self.session.query(TodoItem).filter_by(id=item_id).first()
+        if item:
+            self.session.delete(item)
+            self.session.commit()
+            return True
+        return False
+    
+    def rename(self, item_id: int, new_content: str) -> bool:
+        item = self.session.query(TodoItem).filter_by(id=item_id).first()
+        if item:
+            item.content = new_content
             self.session.commit()
             return True
         return False
