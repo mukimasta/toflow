@@ -41,6 +41,7 @@ def run():
     is_now_view = Condition(lambda: state.view == View.NOW)
     is_structure_view = Condition(lambda: state.view == View.STRUCTURE)
     is_info_view = Condition(lambda: state.view == View.INFO)
+    is_archive_view = Condition(lambda: state.view == View.ARCHIVE)
 
 
     # == General Key Bindings ==
@@ -66,6 +67,11 @@ def run():
     @kb.add("tab", filter=is_normal_mode)
     def _(event):
         state.switch_view()
+
+    @kb.add("A", filter=is_normal_mode)
+    def _(event):
+        """Enter Archive View from any view."""
+        state.enter_archive_view()
 
 
     # @kb.add(":", filter=is_normal_mode)
@@ -127,7 +133,35 @@ def run():
 
     @kb.add("space", filter=is_normal_mode & is_structure_view)
     def _(event):
+        """
+        Toggle item status:
+        - TODOS level: Todo done ↔ active (or other → active)
+        - TRACKS_WITH_PROJECTS_P level: Project finished ↔ active (or other → active)
+        """
         state.structure_state.toggle_selected_item()
+
+    @kb.add("s", filter=is_normal_mode & is_structure_view)
+    def _(event):
+        state.structure_state.sleep_selected_item()
+
+    @kb.add("c", filter=is_normal_mode & is_structure_view)
+    def _(event):
+        state.structure_state.cancel_selected_item()
+
+    @kb.add("f", filter=is_normal_mode & is_structure_view)
+    def _(event):
+        state.structure_state.focus_selected_item()
+
+    @kb.add("a", filter=is_normal_mode & is_structure_view)
+    def _(event):
+        state.ask_confirm(PendingAction.ARCHIVE_STRUCTURE_ITEM)
+    @kb.add("a", filter=is_confirm_mode & is_structure_view)
+    def _(event):
+        confirm_action = state.ui_mode_state.confirm_action
+        assert confirm_action is not None
+        if confirm_action == PendingAction.ARCHIVE_STRUCTURE_ITEM:
+            state.structure_state.archive_selected_item()
+        state.cancel_confirm()
 
     @kb.add("enter", filter=is_normal_mode & is_structure_view)
     def _(event):
@@ -197,6 +231,53 @@ def run():
             input_buffer.reset()
             input_buffer.text = default_value
             input_buffer.cursor_position = len(default_value)
+
+    # ARCHIVE view specific key bindings
+
+    @kb.add("up", filter=is_normal_mode & is_archive_view)
+    def _(event):
+        state.archive_state.move_cursor(-1)
+
+    @kb.add("down", filter=is_normal_mode & is_archive_view)
+    def _(event):
+        state.archive_state.move_cursor(1)
+
+    @kb.add("u", filter=is_normal_mode & is_archive_view)
+    def _(event):
+        """Unarchive selected item."""
+        state.ask_confirm(PendingAction.UNARCHIVE_ITEM)
+
+    @kb.add("u", filter=is_confirm_mode & is_archive_view)
+    def _(event):
+        confirm_action = state.ui_mode_state.confirm_action
+        assert confirm_action is not None
+        if confirm_action == PendingAction.UNARCHIVE_ITEM:
+            state.archive_state.unarchive_selected_item()
+        state.cancel_confirm()
+
+    @kb.add("backspace", filter=is_normal_mode & is_archive_view)
+    def _(event):
+        """Delete selected item permanently."""
+        state.ask_confirm(PendingAction.DELETE_ARCHIVE_ITEM)
+
+    @kb.add("backspace", filter=is_confirm_mode & is_archive_view)
+    def _(event):
+        confirm_action = state.ui_mode_state.confirm_action
+        assert confirm_action is not None
+        if confirm_action == PendingAction.DELETE_ARCHIVE_ITEM:
+            state.archive_state.delete_selected_item()
+        state.cancel_confirm()
+
+    @kb.add("i", filter=is_normal_mode & is_archive_view)
+    def _(event):
+        """View info of selected archived item."""
+        state.open_item_info()
+
+    @kb.add("escape", filter=is_normal_mode & is_archive_view)
+    @kb.add("A", filter=is_normal_mode & is_archive_view)
+    def _(event):
+        """Exit Archive View (return to STRUCTURE)."""
+        state.exit_archive_view()
 
 
     # == Input Mode Key Bindings ==
@@ -279,6 +360,17 @@ def run():
             ),
 
             # ============================================
+            # ARCHIVE View (full-width main content)
+            # ============================================
+            ConditionalContainer(
+                Window(
+                    content=FormattedTextControl(renderer.render_archive_view_content),
+                    wrap_lines=True
+                ),
+                filter=is_archive_view
+            ),
+
+            # ============================================
             # Separator (shared, full-width)
             # ============================================
             Window(height=1, char="─", style="class:separator"),
@@ -324,6 +416,27 @@ def run():
         "timer_idle": "bold",
         "timer_running": "bold ansigreen",
         "timer_paused": "bold ansiyellow",
+
+        # Track status styles
+        "track.active": "",
+        "track.sleeping": "ansibrightblack",
+
+        # Project status styles
+        "project.focusing": "bold",
+        "project.active": "",
+        "project.sleeping": "ansibrightblack",
+        "project.finished": "ansibrightblack",
+        "project.cancelled": "ansibrightblack strike",
+
+        # Todo status styles
+        "todo.active": "",
+        "todo.sleeping": "ansibrightblack",
+        "todo.done": "ansibrightblack",
+        "todo.cancelled": "ansibrightblack strike",
+
+        # Archive view styles
+        "idea.archived": "ansibrightblack",
+        "todo.archived": "ansibrightblack",
     })
 
     app = Application(

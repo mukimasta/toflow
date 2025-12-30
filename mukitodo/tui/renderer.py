@@ -21,7 +21,7 @@ class Renderer:
 
     def render_now_view_content(self) -> list:
         """Render NOW view content."""
-        return self._render_now_main_content()
+        return self._render_now_view()
 
     def render_structure_view_content(self) -> list:
         """Render STRUCTURE view content based on current level."""
@@ -37,6 +37,10 @@ class Renderer:
     def render_info_view_content(self) -> list:
         """Render INFO view content."""
         return self._render_info_view()
+
+    def render_archive_view_content(self) -> list:
+        """Render ARCHIVE view content."""
+        return self._render_archive_view()
 
     def render_status_line(self) -> list:
         """Render status line based on current mode and state."""
@@ -118,7 +122,11 @@ class Renderer:
             parts.extend(["[Tab] NOW", "[:] command", "[q] quit"])
 
             return [("class:dim", "  " + "  ".join(parts))]
-        
+
+        if self.state.view == View.ARCHIVE:
+            parts = ["[↑↓] move", "[u] unarchive", "[Backspace] delete", "[i] detail", "[Esc/A] exit", "[q] quit"]
+            return [("class:dim", "  " + "  ".join(parts))]
+
         # Default fallback
         return [("class:dim", "  [q] Quit")]
 
@@ -151,7 +159,7 @@ class Renderer:
 
     # == View Renderers =================
 
-    def _render_now_main_content(self) -> list:
+    def _render_now_view(self) -> list:
         """Render NOW view with centered box layout."""
         lines = []
         box_width = 60
@@ -208,7 +216,7 @@ class Renderer:
         for idx, track in enumerate(tracks):
             is_selected = idx == self.state.structure_state.selected_track_idx
             prefix = "▸ " if is_selected else "  "
-            style = "class:selected" if is_selected else ""
+            style = self._get_item_style(track, "track", is_selected)
             lines.append((style, f"{prefix}Track {idx + 1}: {track['name']}\n"))
 
         return lines
@@ -260,10 +268,14 @@ class Renderer:
         else:
             for idx, todo in enumerate(todos):
                 is_selected = idx == self.state.structure_state.selected_todo_idx
-                marker = "✓" if todo["status"] == "done" else "○"
                 prefix = "▸ " if is_selected else "  "
-                is_done = todo["status"] == "done"
-                style = "class:selected" if is_selected else ("class:done" if is_done else "")
+
+                # Apply status style
+                style = self._get_item_style(todo, "todo", is_selected)
+
+                # Keep existing marker logic
+                marker = "✓" if todo["status"] == "done" else "○"
+
                 lines.append((style, f"{prefix}Item {idx + 1}: {marker} {todo['name']}\n"))
 
         return lines
@@ -295,6 +307,72 @@ class Renderer:
         
         return lines
 
+
+    def _render_archive_view(self) -> list:
+        """Render ARCHIVE view content."""
+        lines = []
+        archive_data = self.state.archive_state.archive_data
+        flat_items = self.state.archive_state.flat_items
+        selected_idx = self.state.archive_state.selected_idx
+
+        if not archive_data or (not archive_data.get("tracks") and not archive_data.get("ideas")):
+            lines.append(("class:dim", "  No archived items\n"))
+            return lines
+
+        lines.append(("class:header", "  Archive\n\n"))
+
+        # Render Track/Project/Todo tree
+        flat_idx = 0
+        for track_item in archive_data["tracks"]:
+            # Track line
+            is_selected = flat_idx == selected_idx
+            prefix = "▸ " if is_selected else "  "
+            style = self._get_archive_track_style(track_item, is_selected)
+            track_status = track_item["track"]["status"]
+            # Only show status suffix for unarchived tracks (has archived children case)
+            suffix = f" ({track_status})" if not track_item["is_archived"] else ""
+            lines.append((style, f"{prefix}Track: {track_item['track']['name']}{suffix}\n"))
+            flat_idx += 1
+
+            # Projects under track
+            for proj_item in track_item["projects"]:
+                is_selected = flat_idx == selected_idx
+                prefix = "▸ " if is_selected else "  "
+                style = self._get_archive_project_style(proj_item, is_selected)
+                project_status = proj_item["project"]["status"]
+                # Only show status suffix for unarchived projects (has archived children case)
+                suffix = f" ({project_status})" if not proj_item["is_archived"] else ""
+                marker = " ✓" if project_status == "finished" else ""
+                lines.append((style, f"{prefix}  Project: {proj_item['project']['name']}{marker}{suffix}\n"))
+                flat_idx += 1
+
+                # Todos under project
+                for todo in proj_item["todos"]:
+                    is_selected = flat_idx == selected_idx
+                    prefix = "▸ " if is_selected else "  "
+                    # Use todo status style instead of archived gray
+                    if is_selected:
+                        style = "class:selected"
+                    else:
+                        todo_status = todo["status"]
+                        style = f"class:todo.{todo_status}"
+                    marker = "✓" if todo["status"] == "done" else "○"
+                    lines.append((style, f"{prefix}    {marker} {todo['name']}\n"))
+                    flat_idx += 1
+
+            lines.append(("", "\n"))
+
+        # Render Ideas section
+        if archive_data["ideas"]:
+            lines.append(("class:header", "  Archived Ideas\n\n"))
+            for idea in archive_data["ideas"]:
+                is_selected = flat_idx == selected_idx
+                prefix = "▸ " if is_selected else "  "
+                style = "class:selected" if is_selected else "class:idea.archived"
+                lines.append((style, f"{prefix}Idea: {idea['name']} (archived)\n"))
+                flat_idx += 1
+
+        return lines
 
 
     # == Blocks ================================
@@ -367,17 +445,23 @@ class Renderer:
     def _track_with_projects_block(self, track, projects, track_idx, is_track_selected) -> list:
         """Render a single track box with its projects."""
         lines = []
-        
-        # Keep track highlighted when selected (either focused on track or projects)
-        track_style = "class:selected_track" if is_track_selected else "class:unselected_track"
-        
+
+        # Apply Track status style (selected_track/unselected_track for compatibility with box borders)
+        if is_track_selected:
+            track_style = "class:selected_track"
+        else:
+            # Use status-based style for unselected tracks
+            track_style = self._get_item_style(track, "track", False)
+            if track_style == "":
+                track_style = "class:unselected_track"
+
         # Build top line with title
         title = f" Track {track_idx + 1}: {track['name']} "
         title_display_width = self._display_width(title)  # Fix for Chinese characters
         dash_count = max(1, self.box_width - 2 - 1 - title_display_width)
         top_line = "┌─" + title + "─" * dash_count + "┐\n"
         lines.append((track_style, top_line))
-        
+
         if not projects:
             # Highlight "(no projects)" if focus is on projects
             is_empty_focused = is_track_selected and self.state.structure_state.structure_level == StructureLevel.TRACKS_WITH_PROJECTS_P
@@ -396,17 +480,24 @@ class Renderer:
                     and self.state.structure_state.structure_level == StructureLevel.TRACKS_WITH_PROJECTS_P
                     and proj_idx == self.state.structure_state.selected_project_idx
                 )
+
+                # Apply Project status style
+                proj_style = self._get_item_style(project, "project", is_project_selected)
+
                 proj_prefix = "▸ " if is_project_selected else "  "
-                proj_text = f"{proj_prefix}Project {proj_idx + 1}: {project['name']}"
+
+                # Add ✓ suffix for finished projects
+                status_suffix = " ✓" if project["status"] == "finished" else ""
+
+                proj_text = f"{proj_prefix}Project {proj_idx + 1}: {project['name']}{status_suffix}"
                 proj_text_width = self._display_width(proj_text)  # Fix for Chinese characters
                 padding = max(0, self.box_width - 2 - proj_text_width)
-                proj_style = "class:selected" if is_project_selected else track_style
                 lines.append((proj_style, f"│{proj_text}" + " " * padding + "│\n"))
-        
+
         bottom_line = "└" + "─" * (self.box_width - 2) + "┘\n"
         lines.append((track_style, bottom_line))
         lines.append(("", "\n"))
-        
+
         return lines
 
     def _items_block(self) -> list:
@@ -432,6 +523,24 @@ class Renderer:
             else:
                 width += 1
         return width
+
+    def _get_item_style(self, item: dict, item_type: str, is_selected: bool) -> str:
+        """
+        Get style class for an item based on its status and type.
+
+        Args:
+            item: Item dictionary with 'status' field
+            item_type: "track", "project", or "todo"
+            is_selected: Whether the item is currently selected
+
+        Returns:
+            Style class string (e.g., "class:selected", "class:project.sleeping")
+        """
+        if is_selected:
+            return "class:selected"
+
+        status = item.get("status", "active")
+        return f"class:{item_type}.{status}"
 
     def _separator_block(self, width: int = 70) -> list:
         """Render a separator line block."""
@@ -483,5 +592,16 @@ class Renderer:
             (style, text),
             ("", " " * right_padding + "│\n")
         ]
-    
-    
+
+    def _get_archive_track_style(self, track_item: dict, is_selected: bool) -> str:
+        """Get style class for archived track."""
+        if is_selected:
+            return "class:selected"
+        return "" if track_item["is_archived"] else "class:dim"
+
+    def _get_archive_project_style(self, proj_item: dict, is_selected: bool) -> str:
+        """Get style class for archived project."""
+        if is_selected:
+            return "class:selected"
+        return "" if proj_item["is_archived"] else "class:dim"
+

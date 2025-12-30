@@ -148,7 +148,7 @@ class IdeaItem(Base):
             name="idea_item_archived_consistency"
         ),
         CheckConstraint(
-            "(status = 'promoted' AND promoted_at_utc IS NOT NULL AND promoted_to_project_id IS NOT NULL) OR (status != 'promoted' AND promoted_at_utc IS NULL AND promoted_to_project_id IS NULL)",
+            "(status = 'promoted' AND promoted_at_utc IS NOT NULL) OR (status != 'promoted' AND promoted_at_utc IS NULL AND promoted_to_project_id IS NULL)",
             name="idea_item_promoted_consistency"
         ),
     )
@@ -198,6 +198,7 @@ class NowSession(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
     todo_item_id: Mapped[int | None] = mapped_column(ForeignKey("todo_items.id"), nullable=True)
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -209,6 +210,7 @@ class NowSession(Base):
         local_timezone = local_timezone or datetime.now().astimezone().tzinfo
         return {
             "id": self.id,
+            "description": self.description,
             "project_id": self.project_id,
             "todo_item_id": self.todo_item_id,
             "duration_minutes": self.duration_minutes,

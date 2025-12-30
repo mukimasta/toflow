@@ -6,6 +6,7 @@ from mukitodo.actions import Result, EmptyResult
 from mukitodo.tui.states.now_state import NowState
 from mukitodo.tui.states.structure_state import StructureState, StructureLevel
 from mukitodo.tui.states.info_state import InfoState
+from mukitodo.tui.states.archive_state import ArchiveState
 from mukitodo.tui.states.message_holder import MessageHolder
 
 
@@ -14,6 +15,7 @@ class View(Enum):
     NOW = "now"
     STRUCTURE = "structure"
     INFO = "info"
+    ARCHIVE = "archive"
 
 
 
@@ -38,6 +40,9 @@ class PendingAction(Enum):
     DELETE_STRUCTURE_ITEM = ("delete_structure_item", "backspace")
     ENTER_NOW_WITH_STRUCTURE_ITEM = ("enter_now_with_structure_item", "enter")
     FINISH_SESSION = ("finish_session", "enter")
+    ARCHIVE_STRUCTURE_ITEM = ("archive_structure_item", "a")
+    UNARCHIVE_ITEM = ("unarchive_item", "u")
+    DELETE_ARCHIVE_ITEM = ("delete_archive_item", "backspace")
 
     @property
     def name(self) -> str:
@@ -81,6 +86,7 @@ class AppState:
         self._now_state = NowState(self._message)
         self._structure_state = StructureState(self._message)
         self._info_state = InfoState(self._message)
+        self._archive_state = ArchiveState(self._message)
         
         # === UI Mode state ===
         self._ui_mode_state: UIModeState = UIModeState(mode=UIMode.NORMAL)
@@ -108,7 +114,24 @@ class AppState:
             item_type, track_id, project_id, todo_id = self._now_state.get_current_item_context()
         elif self._view == View.STRUCTURE:
             item_type, track_id, project_id, todo_id = self._structure_state.get_selected_item_context()
+        elif self._view == View.ARCHIVE:
+            item_type, track_id, project_id, todo_id = self._archive_state.get_selected_item_context()
         else:
+            return
+        
+        if item_type == "none":
+            return
+
+        if item_type == "track" and track_id is None:
+            self._message.set(Result(False, None, "No track selected"))
+            return
+        
+        if item_type == "project" and project_id is None:
+            self._message.set(Result(False, None, "No project selected"))
+            return
+
+        if item_type == "todo" and todo_id is None:
+            self._message.set(Result(False, None, "No todo selected"))
             return
 
         self._view = View.INFO
@@ -124,6 +147,18 @@ class AppState:
         self._info_state.leave_info_panel()
         if self._view == View.STRUCTURE:
             self._structure_state.load_current_lists()
+        elif self._view == View.ARCHIVE:
+            self._archive_state.load_archive_data()
+
+    def enter_archive_view(self) -> None:
+        """Enter ARCHIVE view from any view."""
+        self._view = View.ARCHIVE
+        self._archive_state.load_archive_data()
+
+    def exit_archive_view(self) -> None:
+        """Exit ARCHIVE view and return to STRUCTURE view."""
+        self._view = View.STRUCTURE
+        self._structure_state.load_current_lists()
 
     def enter_now_with_structure_item(self) -> None:
         """Enter NOW view with currently selected structure item (project or todo)."""
@@ -134,7 +169,7 @@ class AppState:
 
         assert track_id is not None
         assert project_id is not None
-        
+
         self._now_state.set_item(track_id, project_id, todo_id)
         self._view = View.NOW
         self._message.set(Result(True, None, f"Entered NOW with {item_type}"))
@@ -226,7 +261,11 @@ class AppState:
     @property
     def info_state(self) -> InfoState:
         return self._info_state
-    
+
+    @property
+    def archive_state(self) -> ArchiveState:
+        return self._archive_state
+
     @property
     def ui_mode_state(self) -> UIModeState:
         return self._ui_mode_state

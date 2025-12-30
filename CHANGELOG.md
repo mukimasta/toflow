@@ -2,7 +2,7 @@
 MukiTodo — Version History / 更新记录
 ————————
 
-### v0.01: MVP | 2025-12-6
+### v0.01 2025-12-6 MVP
 
 这是 MukiTodo 的第一个最小可用版本
 我需要的不止是简单的分类 Todo 列表，而是以「项目」为核心的管理系统
@@ -15,7 +15,7 @@ MukiTodo — Version History / 更新记录
 5. 数据存储使用 SQLite 储存在 home 目录下
 6. 实现 Track、Project、Item 的增删改查功能
 
-### v0.0.2 重大更新: 架构设计 / NOW 行动器 | 2025-12-10
+### v0.0.2 2025-12-10 重大更新: 架构设计 / NOW 行动器
 
 这是 MukiTodo 的第二个最小可用版本
 
@@ -112,7 +112,7 @@ cli.py
 │   └── structure_state.py
 ```
 
-### v0.0.3 (c) 重大更新: 完善 TUI 架构，实现 Renderer 与 State 完全分离
+### v0.0.3 (c) 2025-12-27 重大更新: 完善 TUI 架构，实现 Renderer 与 State 完全分离
 
 1. 完善 State 类数据缓存，为 Renderer 提供可直接读取的数据，无需再调用 actions
 2. 重构 app.py 布局设计
@@ -130,5 +130,35 @@ cli.py
 4. 完善 README.md 文档
 
 
-### v0.0.4
+### v0.0.4 (a) 状态切换以及排序功能、Archive 功能 2025-12-29
 
+1. 实现 Item 的各状态切换功能（Sleep, Cancel, Archive, ...）✅
+2. 实现 Structure View 根据 Item 状态排序功能并用不同样式显示✅
+    - Track: Active > Sleeping
+    - Project: Focusing > Active > Sleeping > Finished > Cancelled
+    - Todo: Active > Sleeping > Done > Cancelled
+3. 实现 Archive 面板（View）✅
+
+### v0.0.4 (b) 实现 Timeline View
+
+
+
+### v0.0.4 (c)
+
+
+3. 完善 Item 的更多信息的样式显示
+5. 实现 Takeaways 的记录功能 
+6. 实现 Takeaways 面板（View）
+7. 实现 NOW Done List 功能
+8. 更改 Input Mode 显示及功能，Rename/Add Item 模式下，新增更多字段的编辑功能
+    - Prompt 部分改为两行，第一行显示 Input Purpose Prompt，第二行显示类型切换按钮，例如 Takeaway.type (action/insight)
+    - 输入框改为两行，第一行输入 Title/Name，第二行输入 Description/Content
+    - Track Item 可编辑 Name, Description
+    - Project Item 可编辑 Name, Description; Deadline, Willingness, Importance, Urgency, Started At
+    - Todo Item 可编辑 Name, Description; URL, Deadline
+    - Idea Item 可编辑 Name, Description; Maturity, Willingness, Status
+    - Session Item 可编辑 Description; Started At, Duration, Ended At
+    - Takeaway Item 可编辑 Title, Content, Type, Date
+
+
+v0.0.5 计划：实现 Box 收集箱

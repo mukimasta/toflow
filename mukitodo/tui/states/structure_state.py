@@ -164,25 +164,170 @@ class StructureState:
     # Data Manipulation
 
     def toggle_selected_item(self) -> None:
-        """Toggle current structure item Done/Undo status (only todo)."""
-        if self._structure_level != StructureLevel.TODOS:
+        """
+        Toggle item status with Space key.
+        - TODOS level: Todo done ↔ active (or other → active)
+        - TRACKS_WITH_PROJECTS_P level: Project finished ↔ active (or other → active)
+        - Other levels: No action
+        """
+        # Todo toggle (TODOS level)
+        if self._structure_level == StructureLevel.TODOS:
+            todo = self.current_todo_dict
+            if not todo:
+                return
+
+            current_status = todo.get("status", "active")
+
+            # Toggle logic: done ↔ active, others → active
+            if current_status == "active":
+                result = actions.done_todo(self._current_todo_id) # type: ignore
+            else:
+                result = actions.activate_todo(self._current_todo_id) # type: ignore
+
+            self.load_current_lists()
+            self._message.set(result)
+
+        # Project toggle (TRACKS_WITH_PROJECTS_P level)
+        elif self._structure_level == StructureLevel.TRACKS_WITH_PROJECTS_P:
+            project = self.current_project_dict
+            if not project:
+                return
+
+            current_status = project.get("status", "active")
+
+            # Toggle logic: finished ↔ active, others → active
+            if current_status == "finished":
+                result = actions.activate_project(self._current_project_id) # type: ignore
+            elif current_status == "active":
+                result = actions.finish_project(self._current_project_id) # type: ignore
+            else:
+                result = actions.activate_project(self._current_project_id) # type: ignore
+
+            self.load_current_lists()
+            self._message.set(result)
+
+    def sleep_selected_item(self) -> None:
+        """
+        Sleep selected item with 's' key (sleep ↔ active toggle).
+        - TRACKS level or TRACKS_WITH_PROJECTS_T: Sleep/activate Track
+        - TRACKS_WITH_PROJECTS_P level: Sleep/activate Project
+        - TODOS level: Sleep/activate Todo
+        """
+        # Track sleep
+        if self._structure_level in [StructureLevel.TRACKS, StructureLevel.TRACKS_WITH_PROJECTS_T]:
+            track = self.current_track_dict
+            if not track:
+                return
+
+            current_status = track.get("status", "active")
+
+            # Toggle: sleeping ↔ active
+            if current_status == "sleeping":
+                result = actions.activate_track(self._current_track_id) # type: ignore
+            else:
+                result = actions.sleep_track(self._current_track_id) # type: ignore
+
+            self.load_current_lists()
+            self._message.set(result)
+
+        # Project sleep
+        elif self._structure_level == StructureLevel.TRACKS_WITH_PROJECTS_P:
+            project = self.current_project_dict
+            if not project:
+                return
+
+            current_status = project.get("status", "active")
+
+            # Toggle: sleeping ↔ active
+            if current_status == "sleeping":
+                result = actions.activate_project(self._current_project_id) # type: ignore
+            else:
+                result = actions.sleep_project(self._current_project_id) # type: ignore
+
+            self.load_current_lists()
+            self._message.set(result)
+
+        # Todo sleep
+        elif self._structure_level == StructureLevel.TODOS:
+            todo = self.current_todo_dict
+            if not todo:
+                return
+
+            current_status = todo.get("status", "active")
+
+            # Toggle: sleeping ↔ active
+            if current_status == "sleeping":
+                result = actions.activate_todo(self._current_todo_id) # type: ignore
+            else:
+                result = actions.sleep_todo(self._current_todo_id) # type: ignore
+
+            self.load_current_lists()
+            self._message.set(result)
+
+    def cancel_selected_item(self) -> None:
+        """
+        Cancel selected item with 'c' key (cancel ↔ active toggle).
+        Only works for Project and Todo (Track cannot be cancelled).
+        - TRACKS_WITH_PROJECTS_P level: Cancel/activate Project
+        - TODOS level: Cancel/activate Todo
+        """
+        # Project cancel
+        if self._structure_level == StructureLevel.TRACKS_WITH_PROJECTS_P:
+            project = self.current_project_dict
+            if not project:
+                return
+
+            current_status = project.get("status", "active")
+
+            # Toggle: cancelled ↔ active
+            if current_status == "cancelled":
+                result = actions.activate_project(self._current_project_id) # type: ignore
+            else:
+                result = actions.cancel_project(self._current_project_id) # type: ignore
+
+            self.load_current_lists()
+            self._message.set(result)
+
+        # Todo cancel
+        elif self._structure_level == StructureLevel.TODOS:
+            todo = self.current_todo_dict
+            if not todo:
+                return
+
+            current_status = todo.get("status", "active")
+
+            # Toggle: cancelled ↔ active
+            if current_status == "cancelled":
+                result = actions.activate_todo(self._current_todo_id) # type: ignore
+            else:
+                result = actions.cancel_todo(self._current_todo_id) # type: ignore
+
+            self.load_current_lists()
+            self._message.set(result)
+
+    def focus_selected_item(self) -> None:
+        """
+        Focus selected item with 'f' key (focusing ↔ active toggle).
+        Only works for Project at TRACKS_WITH_PROJECTS_P level.
+        """
+        if self._structure_level != StructureLevel.TRACKS_WITH_PROJECTS_P:
             return
 
-        if not self._current_todos_list:
+        project = self.current_project_dict
+        if not project:
             return
 
-        assert isinstance(self._selected_todo_idx, int)
-        todo = self._current_todos_list[self._selected_todo_idx]
-        todo_id = todo["id"]
+        current_status = project.get("status", "active")
 
-        if todo["status"] == "done":
-            result = actions.activate_todo(todo_id)
+        # Toggle: focusing ↔ active
+        if current_status == "focusing":
+            result = actions.activate_project(self._current_project_id) # type: ignore
         else:
-            result = actions.done_todo(todo_id)
+            result = actions.focus_project(self._current_project_id) # type: ignore
 
         self.load_current_lists()
         self._message.set(result)
-    
+
     def delete_selected_item(self, ask_confirm: bool = False) -> None:
         """Delete the current item (track, project, or todo)."""
 
@@ -238,7 +383,60 @@ class StructureState:
 
         else:
             raise ValueError(f"Invalid structure level: {self._structure_level}")
-    
+
+    def archive_selected_item(self) -> None:
+        """Archive the currently selected item."""
+        if self._structure_level in [StructureLevel.TRACKS, StructureLevel.TRACKS_WITH_PROJECTS_T]:
+            # Archive track
+            if not self._current_tracks_list:
+                self._message.set(Result(False, None, "No tracks to archive"))
+                return
+            assert isinstance(self._selected_track_idx, int)
+            track = self._current_tracks_list[self._selected_track_idx]
+            result = actions.archive_track(track["id"])
+            self.load_current_lists()
+            # Adjust cursor if out of bounds
+            if self._current_tracks_list and self._selected_track_idx >= len(self._current_tracks_list):
+                self._selected_track_idx = max(0, len(self._current_tracks_list) - 1)
+                self.load_current_lists()
+            elif not self._current_tracks_list:
+                self._selected_track_idx = None
+            self._message.set(result)
+
+        elif self._structure_level == StructureLevel.TRACKS_WITH_PROJECTS_P:
+            # Archive project
+            if not self._current_projects_list:
+                self._message.set(Result(False, None, "No projects to archive"))
+                return
+            assert isinstance(self._selected_project_idx, int)
+            project = self._current_projects_list[self._selected_project_idx]
+            result = actions.archive_project(project["id"])
+            self.load_current_lists()
+            # Adjust cursor
+            if self._current_projects_list and self._selected_project_idx >= len(self._current_projects_list):
+                self._selected_project_idx = max(0, len(self._current_projects_list) - 1)
+                self.load_current_lists()
+            elif not self._current_projects_list:
+                self._selected_project_idx = None
+            self._message.set(result)
+
+        elif self._structure_level == StructureLevel.TODOS:
+            # Archive todo
+            if not self._current_todos_list:
+                self._message.set(Result(False, None, "No todos to archive"))
+                return
+            assert isinstance(self._selected_todo_idx, int)
+            todo = self._current_todos_list[self._selected_todo_idx]
+            result = actions.archive_todo(todo["id"])
+            self.load_current_lists()
+            # Adjust cursor
+            if self._current_todos_list and self._selected_todo_idx >= len(self._current_todos_list):
+                self._selected_todo_idx = max(0, len(self._current_todos_list) - 1)
+                self.load_current_lists()
+            elif not self._current_todos_list:
+                self._selected_todo_idx = None
+            self._message.set(result)
+
     def add_new_item(self, name: str) -> None:
         """Add a new item based on current level."""
         if not name:
@@ -512,6 +710,30 @@ class StructureState:
     @property
     def current_todo_id(self) -> int | None:
         return self._current_todo_id
+
+    @property
+    def current_track_dict(self) -> dict | None:
+        """Get current track dict by querying database."""
+        if self._current_track_id is None:
+            return None
+        result = actions.get_track_dict(self._current_track_id)
+        return result.data if result.success else None
+
+    @property
+    def current_project_dict(self) -> dict | None:
+        """Get current project dict by querying database."""
+        if self._current_project_id is None:
+            return None
+        result = actions.get_project_dict(self._current_project_id)
+        return result.data if result.success else None
+
+    @property
+    def current_todo_dict(self) -> dict | None:
+        """Get current todo dict by querying database."""
+        if self._current_todo_id is None:
+            return None
+        result = actions.get_todo_dict(self._current_todo_id)
+        return result.data if result.success else None
 
     @property
     def current_tracks_list(self) -> list[dict]:

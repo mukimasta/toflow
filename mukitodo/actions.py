@@ -15,6 +15,41 @@ class Result:
 EmptyResult = Result(None, None, "")
 
 
+# == Status Ordering Helpers ==============================================
+
+def _get_track_status_order():
+    """Return SQLAlchemy CASE expression for track status ordering."""
+    from sqlalchemy import case
+    return case(
+        (Track.status == "active", 1),
+        (Track.status == "sleeping", 2),
+        else_=3
+    )
+
+def _get_project_status_order():
+    """Return SQLAlchemy CASE expression for project status ordering."""
+    from sqlalchemy import case
+    return case(
+        (Project.status == "focusing", 1),
+        (Project.status == "active", 2),
+        (Project.status == "sleeping", 3),
+        (Project.status == "finished", 4),
+        (Project.status == "cancelled", 5),
+        else_=6
+    )
+
+def _get_todo_status_order():
+    """Return SQLAlchemy CASE expression for todo status ordering."""
+    from sqlalchemy import case
+    return case(
+        (TodoItem.status == "active", 1),
+        (TodoItem.status == "sleeping", 2),
+        (TodoItem.status == "done", 3),
+        (TodoItem.status == "cancelled", 4),
+        else_=5
+    )
+
+
 # == Track Actions ========================================================
 
 # Basic CRUD
@@ -34,16 +69,64 @@ def create_track(name: str, description: str | None = None) -> Result:
     return Result(True, track_id, f"Track '{track_name}' created successfully")
 
 def delete_track(track_id: int) -> Result:
-    '''Delete a track. Result.data: (deleted) track.name'''
+    '''Delete a track and all related items (projects, todos, sessions, takeaways). Result.data: (deleted) track.name'''
     with db_session() as session:
         track = session.query(Track).filter_by(id=track_id).first()
         if not track:
             return Result(False, None, f"Track '{track_id}' not found")
-        
+
         track_name = track.name
+
+        # Get all projects under this track
+        projects = session.query(Project).filter_by(track_id=track_id).all()
+        project_ids = [p.id for p in projects]
+
+        if project_ids:
+            # Delete all todos under these projects
+            todos = session.query(TodoItem).filter(TodoItem.project_id.in_(project_ids)).all()
+            todo_ids = [t.id for t in todos]
+
+            # Get all session IDs that will be deleted (for deleting related takeaways)
+            session_ids_to_delete = []
+            if todo_ids:
+                todo_session_ids = [s.id for s in session.query(NowSession).filter(NowSession.todo_item_id.in_(todo_ids)).all()]
+                session_ids_to_delete.extend(todo_session_ids)
+            project_session_ids = [s.id for s in session.query(NowSession).filter(NowSession.project_id.in_(project_ids)).all()]
+            session_ids_to_delete.extend(project_session_ids)
+
+            # Delete takeaways related to sessions that will be deleted
+            if session_ids_to_delete:
+                session.query(Takeaway).filter(Takeaway.now_session_id.in_(session_ids_to_delete)).delete(synchronize_session=False)
+
+            # Delete takeaways related to these todos
+            if todo_ids:
+                session.query(Takeaway).filter(Takeaway.todo_item_id.in_(todo_ids)).delete(synchronize_session=False)
+                # Delete sessions related to these todos
+                session.query(NowSession).filter(NowSession.todo_item_id.in_(todo_ids)).delete(synchronize_session=False)
+
+            # Delete takeaways related to these projects
+            session.query(Takeaway).filter(Takeaway.project_id.in_(project_ids)).delete(synchronize_session=False)
+            # Delete sessions related to these projects
+            session.query(NowSession).filter(NowSession.project_id.in_(project_ids)).delete(synchronize_session=False)
+
+            # Delete all todos
+            session.query(TodoItem).filter(TodoItem.project_id.in_(project_ids)).delete(synchronize_session=False)
+
+            # Update ideas that were promoted to these projects
+            session.query(IdeaItem).filter(IdeaItem.promoted_to_project_id.in_(project_ids)).update(
+                {"promoted_to_project_id": None}, synchronize_session=False
+            )
+
+            # Delete all projects
+            session.query(Project).filter_by(track_id=track_id).delete(synchronize_session=False)
+
+        # Delete takeaways related to this track
+        session.query(Takeaway).filter_by(track_id=track_id).delete(synchronize_session=False)
+
+        # Finally delete the track
         session.delete(track)
-    
-    return Result(True, track_name, f"Track '{track_name}' deleted successfully")
+
+    return Result(True, track_name, f"Track '{track_name}' and all related items deleted successfully")
 
 def list_tracks_id() -> Result:
     '''List all track ids. Result.data: list of track ids'''
@@ -54,9 +137,12 @@ def list_tracks_id() -> Result:
     return Result(True, data, f"Found {len(tracks)} tracks")
 
 def list_tracks_dict() -> Result:
-    '''List all tracks as dict. Result.data: list[dict]'''
+    '''List all tracks as dict, sorted by status then by ID. Result.data: list[dict]'''
     with db_session() as session:
-        tracks = session.query(Track).filter_by(archived=False).all()
+        tracks = session.query(Track)\
+            .filter_by(archived=False)\
+            .order_by(_get_track_status_order(), Track.id)\
+            .all()
         data = [t.to_dict() for t in tracks]
 
     return Result(True, data, f"Found {len(tracks)} tracks")
@@ -200,16 +286,54 @@ def create_project(
     return Result(True, project_id, f"Project '{project_name}' created successfully")
 
 def delete_project(project_id: int) -> Result:
-    '''Delete a project. Result.data: project_name'''
+    '''Delete a project and all related items (todos, sessions, takeaways). Result.data: project_name'''
     with db_session() as session:
         project = session.query(Project).filter_by(id=project_id).first()
         if not project:
             return Result(False, None, f"Project {project_id} not found")
-        
+
         project_name = project.name
+
+        # Get all todos under this project
+        todos = session.query(TodoItem).filter_by(project_id=project_id).all()
+        todo_ids = [t.id for t in todos]
+
+        # Get all session IDs that will be deleted (for deleting related takeaways)
+        session_ids_to_delete = []
+        if todo_ids:
+            todo_session_ids = [s.id for s in session.query(NowSession).filter(NowSession.todo_item_id.in_(todo_ids)).all()]
+            session_ids_to_delete.extend(todo_session_ids)
+        project_session_ids = [s.id for s in session.query(NowSession).filter_by(project_id=project_id).all()]
+        session_ids_to_delete.extend(project_session_ids)
+
+        # Delete takeaways related to sessions that will be deleted
+        if session_ids_to_delete:
+            session.query(Takeaway).filter(Takeaway.now_session_id.in_(session_ids_to_delete)).delete(synchronize_session=False)
+
+        # Delete takeaways related to todos
+        if todo_ids:
+            session.query(Takeaway).filter(Takeaway.todo_item_id.in_(todo_ids)).delete(synchronize_session=False)
+            # Delete sessions related to todos
+            session.query(NowSession).filter(NowSession.todo_item_id.in_(todo_ids)).delete(synchronize_session=False)
+
+        # Delete takeaways related to this project
+        session.query(Takeaway).filter_by(project_id=project_id).delete(synchronize_session=False)
+        # Delete sessions related to this project
+        session.query(NowSession).filter_by(project_id=project_id).delete(synchronize_session=False)
+
+        # Delete all todos
+        if todo_ids:
+            session.query(TodoItem).filter_by(project_id=project_id).delete(synchronize_session=False)
+
+        # Update ideas that were promoted to this project
+        session.query(IdeaItem).filter_by(promoted_to_project_id=project_id).update(
+            {"promoted_to_project_id": None}, synchronize_session=False
+        )
+
+        # Finally delete the project
         session.delete(project)
-    
-    return Result(True, project_name, f"Project '{project_name}' deleted successfully")
+
+    return Result(True, project_name, f"Project '{project_name}' and all related items deleted successfully")
 
 def list_projects_id(track_id: int) -> Result:
     '''List all project ids. Result.data: list of project ids'''
@@ -220,9 +344,12 @@ def list_projects_id(track_id: int) -> Result:
     return Result(True, data, f"Found {len(projects)} projects")
 
 def list_projects_dict(track_id: int) -> Result:
-    '''List all projects as dict. Result.data: list[dict]'''
+    '''List all projects as dict, sorted by status then by ID. Result.data: list[dict]'''
     with db_session() as session:
-        projects = session.query(Project).filter_by(track_id=track_id, archived=False).all()
+        projects = session.query(Project)\
+            .filter_by(track_id=track_id, archived=False)\
+            .order_by(_get_project_status_order(), Project.id)\
+            .all()
         data = [p.to_dict() for p in projects]
 
     return Result(True, data, f"Found {len(projects)} projects")
@@ -455,15 +582,29 @@ def create_box_todo(
 
 
 def delete_todo(todo_item_id: int) -> Result:
-    '''Delete a todo item. Result.data: None'''
+    '''Delete a todo item and all related items (sessions, takeaways). Result.data: None'''
     with db_session() as session:
         todo = session.query(TodoItem).filter_by(id=todo_item_id).first()
         if not todo:
             return Result(False, None, f"Todo {todo_item_id} not found")
-        
+
+        # Get all session IDs related to this todo (for deleting related takeaways)
+        session_ids = [s.id for s in session.query(NowSession).filter_by(todo_item_id=todo_item_id).all()]
+
+        # Delete takeaways related to sessions that will be deleted
+        if session_ids:
+            session.query(Takeaway).filter(Takeaway.now_session_id.in_(session_ids)).delete(synchronize_session=False)
+
+        # Delete takeaways related to this todo
+        session.query(Takeaway).filter_by(todo_item_id=todo_item_id).delete(synchronize_session=False)
+
+        # Delete sessions related to this todo
+        session.query(NowSession).filter_by(todo_item_id=todo_item_id).delete(synchronize_session=False)
+
+        # Finally delete the todo
         session.delete(todo)
-    
-    return Result(True, None, f"Todo deleted successfully")
+
+    return Result(True, None, f"Todo and all related items deleted successfully")
 
 def list_structure_todos(project_id: int) -> Result:
     '''List all structure todo items. Result.data: list of todo ids'''
@@ -474,9 +615,12 @@ def list_structure_todos(project_id: int) -> Result:
     return Result(True, data, f"Found {len(todos)} todos")
 
 def list_structure_todos_dict(project_id: int) -> Result:
-    '''List all structure todo items as dict. Result.data: list[dict]'''
+    '''List all structure todo items as dict, sorted by status then by ID. Result.data: list[dict]'''
     with db_session() as session:
-        todos = session.query(TodoItem).filter_by(project_id=project_id, archived=False).all()
+        todos = session.query(TodoItem)\
+            .filter_by(project_id=project_id, archived=False)\
+            .order_by(_get_todo_status_order(), TodoItem.id)\
+            .all()
         data = [t.to_dict() for t in todos]
 
     return Result(True, data, f"Found {len(todos)} todos")
@@ -581,16 +725,31 @@ def done_todo(todo_item_id: int) -> Result:
     
     return Result(True, None, f"Todo '{todo_name}' marked as done")
 
+
+def sleep_todo(todo_item_id: int) -> Result:
+    '''Sleep a todo item. Result.data: None'''
+    with db_session() as session:
+        todo = session.query(TodoItem).filter_by(id=todo_item_id).first()
+        if not todo:
+            return Result(False, None, f"Todo {todo_item_id} not found")
+
+        todo_name = todo.name
+        todo.status = "sleeping"
+        todo.completed_at_utc = None
+
+    return Result(True, None, f"Todo '{todo_name}' set to sleeping")
+
 def cancel_todo(todo_item_id: int) -> Result:
     '''Cancel a todo item. Result.data: None'''
     with db_session() as session:
         todo = session.query(TodoItem).filter_by(id=todo_item_id).first()
         if not todo:
             return Result(False, None, f"Todo {todo_item_id} not found")
-        
+
         todo_name = todo.name
         todo.status = "cancelled"
-    
+        todo.completed_at_utc = None
+
     return Result(True, None, f"Todo '{todo_name}' cancelled")
 
 
@@ -864,7 +1023,10 @@ def save_session(
     started_at_utc: datetime,
     ended_at_utc: datetime | None = None
 ) -> Result:
-    '''Save a now session. Result.data: now_session_id'''
+    '''Save a now session. Result.data: now_session_id. Attention: only one of project_id or todo_item_id should be provided.'''
+    if project_id is not None and todo_item_id is not None:
+        return Result(False, None, "Only one of project_id or todo_item_id should be provided")
+
     with db_session() as session:
         now_session = NowSession(
             project_id=project_id,
@@ -900,14 +1062,20 @@ def recover_session() -> Result:
 
 
 def delete_session(now_session_id: int) -> Result:
-    '''Delete a now session. Result.data: None'''
+    '''Delete a now session and unlink related takeaways. Result.data: None'''
     with db_session() as session:
         now_session = session.query(NowSession).filter_by(id=now_session_id).first()
         if not now_session:
             return Result(False, None, f"Session {now_session_id} not found")
-        
+
+        # Unlink takeaways from this session (set now_session_id to NULL)
+        session.query(Takeaway).filter_by(now_session_id=now_session_id).update(
+            {"now_session_id": None}, synchronize_session=False
+        )
+
+        # Finally delete the session
         session.delete(now_session)
-    
+
     return Result(True, None, f"Session deleted successfully")
 
 def list_sessions(track_id: int) -> Result:
@@ -966,7 +1134,13 @@ def create_takeaway(
     todo_item_id: int | None = None,
     now_session_id: int | None = None
 ) -> Result:
-    '''Create a new takeaway. Result.data: takeaway_id. If title is None, it will be auto generated.'''
+    '''Create a new takeaway. Result.data: takeaway_id. If title is None, it will be auto generated.
+    Attention: only one of track_id, project_id, todo_item_id should be provided.'''
+
+    # only one
+    if sum([track_id is not None, project_id is not None, todo_item_id is not None]) != 1:
+        return Result(False, None, "Only one of track_id, project_id, todo_item_id, now_session_id should be provided")
+
     if not content:
         return Result(False, None, "Takeaway content is required")
     
@@ -1083,8 +1257,91 @@ def update_takeaway_date(takeaway_id: int, date: date_type) -> Result:
 # == General Functions ========================================================
 
 
+def list_archived_structure() -> Result:
+    '''
+    List all archived items in hierarchical structure for Archive View.
+
+    Returns:
+        Result.data: dict with structure:
+        {
+            "tracks": [
+                {
+                    "track": track_dict,
+                    "is_archived": bool,
+                    "projects": [
+                        {
+                            "project": project_dict,
+                            "is_archived": bool,
+                            "todos": [todo_dict, ...]
+                        }
+                    ]
+                }
+            ],
+            "ideas": [idea_dict, ...]
+        }
+    '''
+    with db_session() as session:
+        # Query all tracks (including archived)
+        all_tracks = session.query(Track).order_by(Track.id).all()
+
+        tracks_with_archived_content = []
+
+        for track in all_tracks:
+            track_id = track.id
+            track_archived = track.archived
+
+            # Query all projects under this track
+            all_projects = session.query(Project)\
+                .filter_by(track_id=track_id)\
+                .order_by(Project.id)\
+                .all()
+
+            projects_with_archived_content = []
+            has_archived_content = track_archived
+
+            for project in all_projects:
+                project_id = project.id
+                project_archived = project.archived
+
+                # Query archived todos under this project
+                archived_todos = session.query(TodoItem)\
+                    .filter_by(project_id=project_id, archived=True)\
+                    .order_by(TodoItem.id)\
+                    .all()
+
+                # Include project if: project is archived OR has archived todos
+                if project_archived or archived_todos:
+                    has_archived_content = True
+                    projects_with_archived_content.append({
+                        "project": project.to_dict(),
+                        "is_archived": project_archived,
+                        "todos": [todo.to_dict() for todo in archived_todos]
+                    })
+
+            # Only include track if it has archived content
+            if has_archived_content:
+                tracks_with_archived_content.append({
+                    "track": track.to_dict(),
+                    "is_archived": track_archived,
+                    "projects": projects_with_archived_content
+                })
+
+        # Query all archived ideas
+        archived_ideas = session.query(IdeaItem)\
+            .filter_by(archived=True)\
+            .order_by(IdeaItem.id)\
+            .all()
+
+        result_data = {
+            "tracks": tracks_with_archived_content,
+            "ideas": [idea.to_dict() for idea in archived_ideas]
+        }
+
+        return Result(True, result_data, f"Found {len(tracks_with_archived_content)} tracks and {len(archived_ideas)} ideas with archived content")
+
+
 def set_item_property(item_id: int, item_type: str, field_name: str, value: Any) -> Result:
-    '''ONLY FOR DEBUGGING: Set a property of an item. Result.data: (new) value'''
+    '''DO NOT EDIT!! ONLY FOR DEBUGGING: Set a property of an item. Result.data: (new) value'''
     raise ValueError("This function is only for debugging")
     if item_type == "track":
         item_properties_list = get_track_dict(item_id).data.keys()

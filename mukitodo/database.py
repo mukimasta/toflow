@@ -1,6 +1,6 @@
 from pathlib import Path
 from contextlib import contextmanager
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
 DB_PATH = Path.home() / ".mukitodo" / "todo.db"

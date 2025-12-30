@@ -75,6 +75,13 @@ Now 行动器与 Takeaways 紧密结合。在一次行动结束后，用户可�
 
 archive 语义：我暂时不处理/不想看到这个事项，但是我希望保留它，将来可能需要处理。
 
+delete 细节：
+- **Delete Track**: 递归删除该 Track 下的所有 Projects、Todos、Sessions 和 Takeaways；解除 Ideas 与其 Projects 的关联（promoted_to_project_id → NULL）
+- **Delete Project**: 递归删除该 Project 下的所有 Todos、Sessions 和 Takeaways；解除 Ideas 与该 Project 的关联（promoted_to_project_id → NULL）
+- **Delete Todo**: 删除该 Todo 及其关联的所有 Sessions 和 Takeaways
+- **Delete Session**: 删除该 Session，但保留关联的 Takeaways（now_session_id → NULL）
+- **Delete Takeaway**: 直接删除该 Takeaway 
+
 
 ## TUI 界面与交互设计
 
@@ -89,7 +96,7 @@ archive 语义：我暂时不处理/不想看到这个事项，但是我希望�
 
 
 
-- Switch View: `Tab`
+- Switch View: `Tab` (Between NOW and STRUCTURE)
 - Toggle Box: `Shift`
 - Quit: `q`
 
@@ -99,7 +106,7 @@ archive 语义：我暂时不处理/不想看到这个事项，但是我希望�
 ```text
 ┌───────────────────── NOW ──────────────────────┐
 │                                                │
-│               --- Todo Info ---                │
+│               --- Item Info ---                │
 │                                                │
 │                     25:00                      │
 │                                                │
@@ -111,7 +118,23 @@ archive 语义：我暂时不处理/不想看到这个事项，但是我希望�
 - Reset: `r`
 - Adjust: `+ / = / -`
 - View Info: `i`
+- Record Takeaways: `t`
+- Add Done Item: `d`
 - Finish Session: `Enter`
+
+Item Info:
+- Default: `--- No Todo Selected ---`
+- Selected: `track > project[ > todo]`
+
+
+When Session is finished:
+1. Ask for Saving Confirmation
+2. Ask for Done List if no item is selected
+3. Save Session
+4. Ask for Takeaways
+5. Save Takeaways
+6. Return to NOW view
+
 
 
 ### 2. Track -> Project -> Todo 结构
@@ -124,14 +147,17 @@ General:
 - Add: `+ / =`
 - Rename: `r`
 - Delete: `Backspace`
-- Done / Undo: `Space`
+- Done / Undo: `Space` (Done/Finish/Complete)
 - Enter NOW with item: `Enter`
+NEW/TBD:
+- Archive Item: `a`
+- Sleep Item: `s`
+- Cancel Item: `c` (For Project/Todo/Idea(Deprecate))
+- Record Takeaways: `t`
 
+**Structure Level: Tracks**
 
-
-Structure Level: Tracks
-
-Structure Level: Tracks with Projects (Default)
+**Structure Level: Tracks with Projects (Default)**
 
 ```text
 ┌─ Track 1: Work ────────────────────┐
@@ -144,15 +170,14 @@ Structure Level: Tracks with Projects (Default)
 └────────────────────────────────────┘
 ```
 
+- 
+
+
 <!-- - Toggle Display Mode: T -->
-- Add Project to NOW: Enter
 
 
 
-Structure Level: Todos
-
-- Add Todo to NOW: Enter
-
+**Structure Level: Todos**
 
 
 ### 3. Info 详细信息
@@ -539,7 +564,7 @@ TodoItem: (Structure Todo / Box Todo)
 - description
 - url
 - deadline_utc
-- status NOT NULL, DEFAULT 'active' (active / done / cancelled)
+- status NOT NULL, DEFAULT 'active' (active / done / sleeping / cancelled)
 - archived: boolean, DEFAULT FALSE
 - created_at_utc NOT NULL DEFAULT CURRENT_TIMESTAMP
 - completed_at_utc
@@ -560,15 +585,16 @@ IdeaItem:
 - promoted_to_project_id FOREIGN KEY REFERENCES Project(id) (nullable) DEFAULT NULL
 - order_index
 
-NowSession: (Now Action Session)
+NowSession: (Now Action Session)   (Attention: Only one of project_id or todo_item_id should be provided.)
 - id PRIMARY KEY
+- description
 - project_id FOREIGN KEY REFERENCES Project(id) (nullable)
 - todo_item_id FOREIGN KEY REFERENCES TodoItem(id) (nullable)
 - duration_minutes NOT NULL
 - started_at_utc NOT NULL
 - ended_at_utc (NULL means saving on-going session)
 
-Takeaway:
+Takeaway: (Attention: Only one of track_id, project_id, todo_item_id should be provided.)
 - id PRIMARY KEY
 - title NOT NULL
 - content NOT NULL
