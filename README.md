@@ -31,7 +31,7 @@ Todo / 行动 的概念很简单，就是某个项目下的具体行动列表，
 
 ### 2. Box 收集箱
 
-Track -> Project -> Todo 提供了一个结构性的项目及任务管理框架，它很好地将我们引导向长期主义的行动模式。但是生活中也有一些暂时性的，一次性的工作，例如“阅读朋友发的网页”，“寄一个包裹”。这符合最原始的 Todo 定义，将其放入Track -> Project -> Todo 结构只会徒增负担，完全没有必要。我们用 Box 收集箱的 Todo 栏收集这些事项，需要时可以归档至结构内的 Todo 层级。同时，生活中会有许多的想法，代表了想要探索的一个新项目，这放在 Todo 里显然不合适。我们用 Box 收集箱的 Idea 栏收集这些想法，需要时可以归档至结构内的 Project 层级。
+Track -> Project -> Todo 提供了一个结构性的项目及任务管理框架，它很好地将我们引导向长期主义的行动模式。但是生活中也有一些暂时性的，一次性的工作，例如“阅读朋友发的网页”，“寄一个包裹”。这符合最原始的 Todo 定义，将其放入Track -> Project -> Todo 结构只会徒增负担，完全没有必要。我们用 Box 收集箱的 Todo 栏收集这些事项，需要时可以升级至结构内的 Todo 层级。同时，生活中会有许多的想法，代表了想要探索的一个新项目，这放在 Todo 里显然不合适。我们用 Box 收集箱的 Idea 栏收集这些想法，需要时可以升级至结构内的 Project 层级。
 
 
 ### 3. Now 行动器
@@ -50,7 +50,7 @@ Now / 现在 我要做什么？
 
 同时，你也可以在不选择任何事项的情况下，直接开始行动，在行动结束后记录 Done List 和 Takeaways。
 
-**Now 行动器的核心功能之二：提供极简的番茄钟的倒计时、正计时、休息时间，避免过度沉浸，保护精力与身体健康**
+**Now 行动器的核心功能之二：提供极简的番茄钟的倒计时、休息时间，避免过度沉浸，保护精力与身体健康**
 
 如果说上面的架构都只是搭建基础，那这一步就是真正开始行动的地方。我们希望用户的每次行动，都能够不纠结，无压力，进入最好的心流状态，并在合适的时候退出。
 
@@ -69,17 +69,23 @@ Now 行动器与 Takeaways 紧密结合。在一次行动结束后，用户可�
 
 通过 Takeaways，MukiTodo 将“做过的事情”转化为“留下来的东西”，让每一次行动，不论大小，都有机会成为长期积累的一部分。
 
+**Now 行动器的核心功能之四：Timeline 时间线**
+
+Timeline 时间线视图用于查看所有保存的 Session 和 Takeaways，按时间倒序排列。
+
+
+### 4. Archive 归档
+
+Archive 归档视图用于查看所有已归档的 Item，包括 Track, Project, Todo, Session, Takeaway, Idea。
+Archive 语义：我暂时不处理/不想看到这个事项，但是我希望保留它，将来可能需要处理。
+
+### 5. Timeline 时间线
+
+Timeline 时间线视图用于查看所有已完成的 Session，包括 Session 的基本信息：项目名称、开始时间、持续时间、收获（Takeaways）等。
+Timeline 语义：我想要回顾我过去做了什么，以及我从中收获了什么。
 
 
 
-archive 语义：我暂时不处理/不想看到这个事项，但是我希望保留它，将来可能需要处理。
-
-delete 细节：
-- Delete Track: 递归删除该 Track 下的所有 Projects、Todos、Sessions 和 Takeaways；解除 Ideas 与其 Projects 的关联（promoted_to_project_id → NULL）
-- Delete Project: 递归删除该 Project 下的所有 Todos、Sessions 和 Takeaways；解除 Ideas 与该 Project 的关联（promoted_to_project_id → NULL）
-- Delete Todo: 删除该 Todo 及其关联的所有 Sessions 和 Takeaways
-- Delete Session: 删除该 Session，但保留关联的 Takeaways（now_session_id → NULL）
-- Delete Takeaway: 直接删除该 Takeaway 
 
 
 ## TUI 界面与交互设计
@@ -343,7 +349,7 @@ Box 视图用于收集「临时 Todo」和「新项目 Idea」，并提供一条
 计划在未来实现
 
 
-## CLI 命令设计（计划在未来实现，预计 v0.0.5）
+## CLI 命令设计（计划在未来实现）
 
 Actions:
 
@@ -491,19 +497,20 @@ todo unarchive takeaway <id>                       # Unarchive a takeaway
 **一、整体架构哲学：单向分层，依赖递减**
 
 ```text
-┌─────────────┐
-│ Renderer    │ ← 渲染：只负责呈现
-├─────────────┤
-│ State Layer │ ← 状态：协调与缓存
-├─────────────┤
-│ App         │ ← 应用：交互与 UI 入口
-├─────────────┤
-│ Actions     │ ← 业务：用户意图的直接表达
-├─────────────┤
-│ Models      │ ← 模型：数据的结构化
-├─────────────┤
-│ Database    │ ← 基础设施：持久化
-└─────────────┘
+┌────────────────┐
+│ Layout Manager │
+│ Renderer       │← 渲染：只负责呈现
+├────────────────┤
+│ State Layer    │← 状态：协调与缓存
+├────────────────┤
+│ App            │← 应用：交互与 UI 入口
+├────────────────┤
+│ Actions        │← 业务：用户意图的直接表达
+├────────────────┤
+│ Models         │← 模型：数据的结构化
+├────────────────┤
+│ Database       │← 基础设施：持久化
+└────────────────┘
 ```
 
 核心原则：每一层只依赖下层，从不反向调用。
@@ -589,6 +596,14 @@ todo unarchive takeaway <id>                       # Unarchive a takeaway
 | v0.0.3b | State 拆分为 states/       | 分治：单体到模块化           |
 | v0.0.3c | Renderer 与 State 完全分离 | 纯化：数据缓存前移           |
 
+
+
+delete 细节：
+- Delete Track: 递归删除该 Track 下的所有 Projects、Todos、Sessions 和 Takeaways；解除 Ideas 与其 Projects 的关联（promoted_to_project_id → NULL）
+- Delete Project: 递归删除该 Project 下的所有 Todos、Sessions 和 Takeaways；解除 Ideas 与该 Project 的关联（promoted_to_project_id → NULL）
+- Delete Todo: 删除该 Todo 及其关联的所有 Sessions 和 Takeaways
+- Delete Session: 删除该 Session，但保留关联的 Takeaways（now_session_id → NULL）
+- Delete Takeaway: 直接删除该 Takeaway 
 
 
 

@@ -15,24 +15,13 @@ from prompt_toolkit.layout import (
     Dimension,
 )
 
-from .states.app_state import AppState, UIMode, View
-from .states.input_state import FormField, FormType
+from ..states.app_state import AppState, UIMode, View
+from ..states.input_state import FormField, FormType
 from .renderer import Renderer
+from . import constants
 
 
-# ========================================
-# Layout Constants
-# ========================================
-
-NOW_BOX_WIDTH = 60
-NOW_PADDING_LEFT_RIGHT_WEIGHT = 6
-NOW_PADDING_TOP_WEIGHT = 45
-NOW_PADDING_BOTTOM_WEIGHT = 55
-
-INPUT_PURPOSE_WIDTH = 16
-INPUT_TITLE_WIDTH = 28
-INPUT_DATE_WIDTH = 10
-INPUT_CONTENT_WIDTH = 52
+# Layout constants live in renderer/constants.py (single source of truth).
 
 
 class LayoutManager:
@@ -108,19 +97,19 @@ class LayoutManager:
                     ConditionalContainer(
                         HSplit(
                             [
-                                Window(height=Dimension(weight=NOW_PADDING_TOP_WEIGHT)),
+                                Window(height=Dimension(weight=constants.NOW_PADDING_TOP_WEIGHT)),
                                 VSplit(
                                     [
-                                        Window(width=Dimension(weight=NOW_PADDING_LEFT_RIGHT_WEIGHT)),
+                                        Window(width=Dimension(weight=constants.NOW_PADDING_LEFT_RIGHT_WEIGHT)),
                                         Window(
                                             content=FormattedTextControl(self._renderer.render_now_view_content),
-                                            width=Dimension(preferred=NOW_BOX_WIDTH),
+                                            width=Dimension(preferred=constants.NOW_BOX_WIDTH),
                                             wrap_lines=False,
                                         ),
-                                        Window(width=Dimension(weight=NOW_PADDING_LEFT_RIGHT_WEIGHT)),
+                                        Window(width=Dimension(weight=constants.NOW_PADDING_LEFT_RIGHT_WEIGHT)),
                                     ]
                                 ),
-                                Window(height=Dimension(weight=NOW_PADDING_BOTTOM_WEIGHT)),
+                                Window(height=Dimension(weight=constants.NOW_PADDING_BOTTOM_WEIGHT)),
                             ]
                         ),
                         filter=self._is_now_view,
@@ -131,7 +120,7 @@ class LayoutManager:
                     ConditionalContainer(
                         Window(
                             content=FormattedTextControl(self._renderer.render_structure_view_content),
-                            wrap_lines=True,
+                            wrap_lines=False,
                         ),
                         filter=self._is_structure_view,
                     ),
@@ -141,7 +130,7 @@ class LayoutManager:
                     ConditionalContainer(
                         Window(
                             content=FormattedTextControl(self._renderer.render_box_view_content),
-                            wrap_lines=True,
+                            wrap_lines=False,
                         ),
                         filter=self._is_box_view,
                     ),
@@ -151,7 +140,7 @@ class LayoutManager:
                     ConditionalContainer(
                         Window(
                             content=FormattedTextControl(self._renderer.render_info_view_content),
-                            wrap_lines=True,
+                            wrap_lines=False,
                         ),
                         filter=self._is_info_view,
                     ),
@@ -161,7 +150,7 @@ class LayoutManager:
                     ConditionalContainer(
                         Window(
                             content=FormattedTextControl(self._renderer.render_archive_view_content),
-                            wrap_lines=True,
+                            wrap_lines=False,
                         ),
                         filter=self._is_archive_view,
                     ),
@@ -171,7 +160,7 @@ class LayoutManager:
                     ConditionalContainer(
                         Window(
                             content=FormattedTextControl(self._renderer.render_timeline_view_content),
-                            wrap_lines=True,
+                            wrap_lines=False,
                         ),
                         filter=self._is_timeline_view,
                     ),
@@ -305,52 +294,52 @@ class LayoutManager:
         title_edit_window = Window(
             content=title_buffer_control,
             height=1,
-            width=Dimension(preferred=INPUT_TITLE_WIDTH, max=INPUT_TITLE_WIDTH),
+            width=Dimension(preferred=constants.INPUT_TITLE_WIDTH, max=constants.INPUT_TITLE_WIDTH),
             wrap_lines=False,
         )
         title_display_window = Window(
             content=FormattedTextControl(lambda: self._renderer.render_input_text_value(FormField.TITLE)),
             height=1,
-            width=Dimension(preferred=INPUT_TITLE_WIDTH, max=INPUT_TITLE_WIDTH),
+            width=Dimension(preferred=constants.INPUT_TITLE_WIDTH, max=constants.INPUT_TITLE_WIDTH),
             wrap_lines=False,
         )
 
         deadline_edit_window = Window(
             content=deadline_buffer_control,
             height=1,
-            width=Dimension(preferred=INPUT_DATE_WIDTH, max=INPUT_DATE_WIDTH),
+            width=Dimension(preferred=constants.INPUT_DATE_WIDTH, max=constants.INPUT_DATE_WIDTH),
             wrap_lines=False,
         )
         deadline_display_window = Window(
             content=FormattedTextControl(lambda: self._renderer.render_input_text_value(FormField.DEADLINE)),
             height=1,
-            width=Dimension(preferred=INPUT_DATE_WIDTH, max=INPUT_DATE_WIDTH),
+            width=Dimension(preferred=constants.INPUT_DATE_WIDTH, max=constants.INPUT_DATE_WIDTH),
             wrap_lines=False,
         )
 
         date_edit_window = Window(
             content=date_buffer_control,
             height=1,
-            width=Dimension(preferred=INPUT_DATE_WIDTH, max=INPUT_DATE_WIDTH),
+            width=Dimension(preferred=constants.INPUT_DATE_WIDTH, max=constants.INPUT_DATE_WIDTH),
             wrap_lines=False,
         )
         date_display_window = Window(
             content=FormattedTextControl(lambda: self._renderer.render_input_text_value(FormField.DATE)),
             height=1,
-            width=Dimension(preferred=INPUT_DATE_WIDTH, max=INPUT_DATE_WIDTH),
+            width=Dimension(preferred=constants.INPUT_DATE_WIDTH, max=constants.INPUT_DATE_WIDTH),
             wrap_lines=False,
         )
 
         content_edit_window = Window(
             content=content_buffer_control,
             height=1,
-            width=Dimension(preferred=INPUT_CONTENT_WIDTH, max=INPUT_CONTENT_WIDTH),
+            width=Dimension(preferred=constants.INPUT_CONTENT_WIDTH, max=constants.INPUT_CONTENT_WIDTH),
             wrap_lines=False,
         )
         content_display_window = Window(
             content=FormattedTextControl(lambda: self._renderer.render_input_text_value(FormField.CONTENT)),
             height=1,
-            width=Dimension(preferred=INPUT_CONTENT_WIDTH, max=INPUT_CONTENT_WIDTH),
+            width=Dimension(preferred=constants.INPUT_CONTENT_WIDTH, max=constants.INPUT_CONTENT_WIDTH),
             wrap_lines=False,
         )
 
@@ -408,7 +397,7 @@ class LayoutManager:
                 Window(
                     content=FormattedTextControl(self._renderer.render_input_purpose_prompt),
                     height=1,
-                    width=Dimension(preferred=INPUT_PURPOSE_WIDTH, max=INPUT_PURPOSE_WIDTH),
+                    width=Dimension(preferred=constants.INPUT_PURPOSE_WIDTH, max=constants.INPUT_PURPOSE_WIDTH),
                     wrap_lines=False,
                 ),
                 Window(width=1),

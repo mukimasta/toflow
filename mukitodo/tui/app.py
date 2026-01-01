@@ -8,8 +8,7 @@ from mukitodo.tui.states.box_state import BoxSubview
 from .states.app_state import AppState, UIMode, View, ConfirmAction
 from .states.now_state import TimerStateEnum
 from .states.input_state import InputPurpose
-from .renderer import Renderer
-from .layout_manager import LayoutManager
+from .renderer import Renderer, LayoutManager
 
 
 def run():

@@ -77,7 +77,7 @@ NOW 行动器澄清：计时的时候不保存至数据库，而是保存在 TUI
 1. 当前版本 CLI 仅实现进入 TUI 和 help 两个命令
 2. 排序功能
 
-v0.0.3 Code Hierarchy / Data Flow
+v0.0.3a Code Hierarchy / Data Flow
 
 ```
 cli.py
@@ -89,7 +89,7 @@ cli.py
                 -> models: return model objects
 ```
 
-### v0.0.3 (b) 重大更新: TUI 重构
+### v0.0.3 (b) 重大更新: TUI 重构，新增 Info 视图
 
 1. 重构 TUI 状态管理
     1. TUI 状态管理分为 View 和 UIModeState 两个部分
@@ -222,3 +222,39 @@ flowchart TD
 以及各模式间的交互
 
 未来将进行适度的重构优化，以及大规模的体验优化
+
+### v0.0.5 (a) 2026-01-01 TUI Renderer 大重构
+
+体验优化 / Bugfix
+1. 修复显示问题：Timeline/Structure/Box/Archive/Info View 中，item 过多时超出纵向显示范围
+    - 不使用滚动条，改为“自动位移 / 隐式滚动”：光标移动时保证当前选中项始终可见
+    - Structure 全层级支持（含 TRACKS_WITH_PROJECTS_T / TRACKS_WITH_PROJECTS_P）
+    - TRACKS_WITH_PROJECTS_T：优先完整显示当前 Track 框；若框过高放不下，仍尽可能多显示内容且标题行永远可见；与 P 层级切换尽量不跳动
+2. 重构渲染层结构
+    - 新增 `tui/renderer/` 目录，将 Renderer 与 LayoutManager 收敛为独立模块
+    - 新增 `renderer/blocks.py`：以 block 为最小单位生成 lines，并由 state 的 selected_idx/level 推导 selection（不再“拼完再拆”）
+    - 新增 `renderer/constants.py`：集中管理布局常量，可配置
+
+当前（v0.0.5a）Code Hierarchy / Data Flow
+
+```
+cli.py
+    -> tui/app.run()
+        -> tui/states/app_state.AppState()
+            -> tui/states/now_state.NowState()
+            -> tui/states/structure_state.StructureState()
+            -> tui/states/info_state.InfoState()
+            -> tui/states/timeline_state.TimelineState()
+            -> tui/states/archive_state.ArchiveState()
+            -> tui/states/box_state.BoxState()
+            -> tui/states/message_holder.MessageHolder()
+        -> tui/renderer/LayoutManager.build_layout()
+            -> tui/renderer/Renderer.render_xxx_view_content()
+                -> tui/renderer/blocks: build blocks -> lines + selection
+                -> renderer viewport: apply implicit scroll
+        -> tui/app.key_bindings
+            -> actions: excute action
+                -> models: return model objects
+```
+
+### v0.0.5 (b) 
