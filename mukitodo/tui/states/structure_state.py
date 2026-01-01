@@ -40,12 +40,14 @@ class StructureState:
 
 
         # initialization
-        self._structure_level = StructureLevel.TRACKS_WITH_PROJECTS_T
         self.load_current_lists()
         if self._current_tracks_list:
+            self._structure_level = StructureLevel.TRACKS_WITH_PROJECTS_T
             self._selected_track_idx = 0
             self.load_current_lists()  # Reload to update _current_track_id based on selected index
-        
+        else:
+            self._structure_level = StructureLevel.TRACKS
+            self.load_current_lists()
 
     # Navigation State Management
 
@@ -85,8 +87,14 @@ class StructureState:
 
         self._message.set(EmptyResult)
 
-    def select_current(self) -> None:
-        """Select the current item (enter track or project)."""
+    def select_current(self, enter_todos_level_without_cursor: bool = False) -> None:
+        """
+        Select the current item (enter track or project).
+
+        enter_todos_level_without_cursor:
+        - When entering TODOS from TRACKS_WITH_PROJECTS_P, if True we enter TODOS with no selection
+          (cursor None / no highlight). This is used by BOX move confirm UX.
+        """
         if self._structure_level == StructureLevel.TRACKS:
             if not self._current_tracks_list:
                 self._message.set(Result(False, None, "No tracks available"))
@@ -116,15 +124,23 @@ class StructureState:
             if not self._current_projects_list:
                 self._message.set(Result(False, None, "No projects in this track"))
                 return
+            # Make sure current_project_id is set before switching level
+            if (self._current_projects_list and self._selected_project_idx is not None
+                and 0 <= self._selected_project_idx < len(self._current_projects_list)):
+                self._current_project_id = self._current_projects_list[self._selected_project_idx]["id"]
             # Switch level, initialize todo selection (need to load todos first)
             self._structure_level = StructureLevel.TODOS
-            # Load to get _current_todos_list, then set index
-            self.load_current_lists()
-            if self._current_todos_list:
-                self._selected_todo_idx = 0
-                self.load_current_lists()  # Reload to update _current_todo_id
-            else:
+            if enter_todos_level_without_cursor:
                 self._selected_todo_idx = None
+                self.load_current_lists()
+            else:
+                # Default: load todos and select first item (if any)
+                self.load_current_lists()
+                if self._current_todos_list:
+                    self._selected_todo_idx = 0
+                    self.load_current_lists()  # Reload to update _current_todo_id
+                else:
+                    self._selected_todo_idx = None
             self._message.set(EmptyResult)
 
         elif self._structure_level == StructureLevel.TODOS:
@@ -160,6 +176,30 @@ class StructureState:
 
         self._message.set(EmptyResult)
 
+    # === Public helpers for app-level flows (e.g. BOX transfer) =================
+
+    def reset_to_default_view(self) -> None:
+        """
+        Force STRUCTURE view to TRACKS_WITH_PROJECTS_T level (focus on tracks).
+        Used by BOX transfer flows to normalize the entry level.
+        """
+        self.load_current_lists()
+        if not self._current_tracks_list:
+            self._structure_level = StructureLevel.TRACKS
+            self._selected_track_idx = None
+            self._selected_project_idx = None
+            self._selected_todo_idx = None
+            self.load_current_lists()
+            self._message.set(EmptyResult)
+            return
+
+        self._structure_level = StructureLevel.TRACKS_WITH_PROJECTS_T
+        if self._selected_track_idx is None:
+            self._selected_track_idx = 0
+        self._selected_project_idx = None
+        self._selected_todo_idx = None
+        self.load_current_lists()
+        self._message.set(EmptyResult)
 
     # Data Manipulation
 
@@ -454,7 +494,7 @@ class StructureState:
 
         elif self._structure_level == StructureLevel.TRACKS_WITH_PROJECTS_T:
             # Add a new project to the current track and enter project level
-            if not self._current_track_id:
+            if self._current_track_id is None:
                 self._message.set(Result(False, None, "No track selected"))
                 return
             result = actions.create_project(self._current_track_id, name)
@@ -467,7 +507,7 @@ class StructureState:
             self._message.set(result)
 
         elif self._structure_level == StructureLevel.TRACKS_WITH_PROJECTS_P:
-            if not self._current_track_id:
+            if self._current_track_id is None:
                 self._message.set(Result(False, None, "No track selected"))
                 return
             result = actions.create_project(self._current_track_id, name)
@@ -479,7 +519,7 @@ class StructureState:
             self._message.set(result)
 
         elif self._structure_level == StructureLevel.TODOS:
-            if not self._current_project_id:
+            if self._current_project_id is None:
                 self._message.set(Result(False, None, "No project selected"))
                 return
             result = actions.create_structure_todo(self._current_project_id, name)
@@ -625,7 +665,7 @@ class StructureState:
                 and 0 <= self._selected_track_idx < len(self._current_tracks_list)):
                 self._current_track_id = self._current_tracks_list[self._selected_track_idx]["id"]
                 assert isinstance(self._current_track_id, int)
-                proj_result = actions.list_projects_dict(self._current_track_id)
+                proj_result = actions.list_projects_dict(self._current_track_id, include_tui_meta=True)
                 self._current_projects_list = proj_result.data if (proj_result.success and proj_result.data) else []
             else:
                 self._current_track_id = None
@@ -637,15 +677,15 @@ class StructureState:
             tracks_with_projects = []
             for track in self._current_tracks_list:
                 track_id = track["id"]
-                proj_result = actions.list_projects_dict(track_id)
+                proj_result = actions.list_projects_dict(track_id, include_tui_meta=True)
                 project_dicts = proj_result.data if (proj_result.success and proj_result.data) else []
                 tracks_with_projects.append((track, project_dicts))
             self._current_tracks_with_projects_list = tracks_with_projects
 
         elif self._structure_level == StructureLevel.TRACKS_WITH_PROJECTS_P:
             # Load projects based on current track_id, update project_id, clear todo_id
-            if self._current_track_id:
-                proj_result = actions.list_projects_dict(self._current_track_id)
+            if self._current_track_id is not None:
+                proj_result = actions.list_projects_dict(self._current_track_id, include_tui_meta=True)
                 self._current_projects_list = proj_result.data if (proj_result.success and proj_result.data) else []
             else:
                 self._current_projects_list = []
@@ -661,21 +701,21 @@ class StructureState:
             tracks_with_projects = []
             for track in self._current_tracks_list:
                 track_id = track["id"]
-                proj_result = actions.list_projects_dict(track_id)
+                proj_result = actions.list_projects_dict(track_id, include_tui_meta=True)
                 project_dicts = proj_result.data if (proj_result.success and proj_result.data) else []
                 tracks_with_projects.append((track, project_dicts))
             self._current_tracks_with_projects_list = tracks_with_projects
 
         elif self._structure_level == StructureLevel.TODOS:
             # Load full hierarchy, update todo_id
-            if self._current_track_id:
-                proj_result = actions.list_projects_dict(self._current_track_id)
+            if self._current_track_id is not None:
+                proj_result = actions.list_projects_dict(self._current_track_id, include_tui_meta=True)
                 self._current_projects_list = proj_result.data if (proj_result.success and proj_result.data) else []
             else:
                 self._current_projects_list = []
 
-            if self._current_project_id:
-                result = actions.list_structure_todos_dict(self._current_project_id)
+            if self._current_project_id is not None:
+                result = actions.list_structure_todos_dict(self._current_project_id, include_tui_meta=True)
                 self._current_todos_list = result.data if (result.success and result.data) else []
             else:
                 self._current_todos_list = []

@@ -72,15 +72,14 @@ Now 行动器与 Takeaways 紧密结合。在一次行动结束后，用户可�
 
 
 
-
 archive 语义：我暂时不处理/不想看到这个事项，但是我希望保留它，将来可能需要处理。
 
 delete 细节：
-- **Delete Track**: 递归删除该 Track 下的所有 Projects、Todos、Sessions 和 Takeaways；解除 Ideas 与其 Projects 的关联（promoted_to_project_id → NULL）
-- **Delete Project**: 递归删除该 Project 下的所有 Todos、Sessions 和 Takeaways；解除 Ideas 与该 Project 的关联（promoted_to_project_id → NULL）
-- **Delete Todo**: 删除该 Todo 及其关联的所有 Sessions 和 Takeaways
-- **Delete Session**: 删除该 Session，但保留关联的 Takeaways（now_session_id → NULL）
-- **Delete Takeaway**: 直接删除该 Takeaway 
+- Delete Track: 递归删除该 Track 下的所有 Projects、Todos、Sessions 和 Takeaways；解除 Ideas 与其 Projects 的关联（promoted_to_project_id → NULL）
+- Delete Project: 递归删除该 Project 下的所有 Todos、Sessions 和 Takeaways；解除 Ideas 与该 Project 的关联（promoted_to_project_id → NULL）
+- Delete Todo: 删除该 Todo 及其关联的所有 Sessions 和 Takeaways
+- Delete Session: 删除该 Session，但保留关联的 Takeaways（now_session_id → NULL）
+- Delete Takeaway: 直接删除该 Takeaway 
 
 
 ## TUI 界面与交互设计
@@ -90,14 +89,18 @@ delete 细节：
 2. 选择 Track, Project (, Todo)
 3. 添加至 NOW 行动器
 4. 开始行动
-5. 结束行动
-6. 记录 Takeaways
+5. 结束行动并记录 Takeaways
 
 
 
+
+### 全局按键
 
 - Switch View: `Tab` (Between NOW and STRUCTURE)
-- Toggle Box: `Shift`
+- Timeline View: `t`
+- Box View: `b`
+- Archive View: `A`
+- Info View: `i`
 - Quit: `q`
 
 
@@ -114,18 +117,18 @@ delete 细节：
 └────────────────────────────────────────────────┘
 ```
 
-- Start / Pause / Resume: `Space`
-- Reset: `r`
-- Adjust: `+ / = / -`
-- View Info: `i`
-- Record Takeaways: `t`
-- Add Done Item: `d`
-- Finish Session: `Enter`
-
 Item Info:
 - Default: `--- No Todo Selected ---`
 - Selected: `track > project[ > todo]`
 
+
+- Start / Pause / Resume: `Space`
+- Reset: `r`
+- Adjust: `+ / = / -`
+- View Info: `i`
+- Timeline View: `t`
+- Add Done Item: `d`
+- Finish Session: `Enter`
 
 When Session is finished:
 1. Ask for Saving Confirmation
@@ -136,8 +139,35 @@ When Session is finished:
 6. Return to NOW view
 
 
+### 2. Timeline View
 
-### 2. Track -> Project -> Todo 结构
+- Enter Timeline View: `t`
+- Leave Timeline View: `Esc` / `t`
+- Move Cursor: `Up/Down Arrow`
+- View Info: `i`
+- Add Takeaway: `+ / =`
+- Edit Takeaway: `r`
+- Delete: `Backspace`
+
+```text
+┌─ Timeline ─────────────────────┐
+│  -- 2025-12-29 --              │
+│                                │
+│  ▸ 18:30 25m Session 1: ...    │
+│      ├── 18:32 Takeaway 1: ... │
+│      └── 18:45 Takeaway 2: ... │
+│                                │
+│  -- 2025-12-28 --              │
+│                                │
+│    16:00 45m Session 3: ...    │
+│      └── 16:42 Takeaway 1: ... │
+│                                │
+│    Takeaway: [action] ...      │
+│                                │
+└────────────────────────────────┘
+```
+
+### 3. Track -> Project -> Todo 结构
 
 General:
 - Move Cursor: `Up/Down Arrow`
@@ -149,13 +179,41 @@ General:
 - Delete: `Backspace`
 - Done / Undo: `Space` (Done/Finish/Complete)
 - Enter NOW with item: `Enter`
-NEW/TBD:
 - Archive Item: `a`
 - Sleep Item: `s`
 - Cancel Item: `c` (For Project/Todo/Idea(Deprecate))
 - Record Takeaways: `t`
+- Pin Item: `p` (For Project/Todo)
+
+Display Format:
+
+`<status> <Type + index + name> <flags> <right-aligned: hints, ddl>`
+
+- status: (according to the status of the item)
+    - focusing: `📌` (bold line)
+    - active：`○`
+    - sleeping：`z` (dim line)
+    - finished/done：`◉` (dim line)
+    - cancelled：`×` (dim + strike line)
+- Type + index + name: `Track/Project/Todo <index>: <name>`
+- flags: 
+    - has description: `[≡]`
+    - has url: `[↗]` (only for Todo)
+    - session：`[⧗k]` (k is the number) (Include count of children)
+    - takeaway：`[✎k]` (k is the number) (Include count of children)
+- Hints (only for Project) (Display when 2-3):
+    - willingness: `♥`
+    - importance: `⭑`
+    - urgency: `⚡`
+- Deadline: `YYYY-MM-DD` (Red date if past)
+
+Example:
+`📌 Project 1: Backend [≡] [⧗3] [✎1]      ♥ ⭑ ⚡ 2025-12-31`
+`○ Todo 1: Buy Groceries [↗] [⧗1] [✎1]`
 
 **Structure Level: Tracks**
+
+Simple List.
 
 **Structure Level: Tracks with Projects (Default)**
 
@@ -170,15 +228,10 @@ NEW/TBD:
 └────────────────────────────────────┘
 ```
 
-- 
-
-
-<!-- - Toggle Display Mode: T -->
-
-
 
 **Structure Level: Todos**
 
+Simple List.
 
 ### 3. Info 详细信息
 
@@ -189,71 +242,98 @@ NEW/TBD:
 
 
 ### 4. Box 收集箱
+Box 视图用于收集「临时 Todo」和「新项目 Idea」，并提供一条从 Box 归入结构的无压力路径。
 
+- Enter Box: `b`（from any view；进入默认落在 Box Todos）
+- Switch Subview: `[` → Box Todos， `]` → Box Ideas
+- Move Cursor: `↑/↓ Arrow`
+- View Info: `i`
+- Add: `+ / =`
+- Edit: `r`
+- Archive: `a`（二次确认）
+- Delete: `Backspace`（二次确认）
 
+**Box Todo → Move to Structure**
 
+- Start Move: `m`（在 Box Todos 中）
+- 进入 STRUCTURE 后会自动回到 `TRACKS_WITH_PROJECTS_T`（焦点在 Track）
+- `→` 进入 Project 层（`TRACKS_WITH_PROJECTS_P`）
+- `→` 进入 Todo 层（`TODOS`，cursor 为 None，不高亮），并直接进入 Confirm
+- Confirm: `Enter`（二次确认）
+- Cancel: `Esc`（在 Structure 中取消本次 Move，并回到 Box）
 
+**Box Idea → Promote to Project**
+
+- Start Promote: `p`（在 Box Ideas 中）
+- 进入 STRUCTURE 后会自动回到 `TRACKS_WITH_PROJECTS_T`
+- Confirm: `Enter`（二次确认）
+- Promote 期间按 `→` 会直接进入 Confirm（不会进入 Project 层）
+- 已经 `promoted` 的 idea 无法再次 promote（在 Box 和 actions 层均拦截）
+
+### 5. Archive 归档
+
+```text
+┌─ Archive ──────────────────────┐
+│  Archived Tracks               │
+│                                │
+│  ▸ Track: Project Mgmt         │
+│      Project: Backend Design   │
+│         ○ Setup Database       │
+│         ✓ Write Schemas        │
+│    Project: (finished)         │
+│                                │
+│  Track: Fitness                │
+│      Project: Marathon Train   │
+│                                │
+│  Archived Box Todos            │
+│                                │
+│  ▸ Todo: Buy Groceries         │
+│    Todo: Clean Up Office       │
+│                                │
+│  Archived Box Ideas            │
+│                                │
+│  ▸ Idea: AI Learning Path      │
+│    Idea: Home Automation       │
+│                                │
+└────────────────────────────────┘
+```
+
+- Enter: `A` (from any view)
+- Exit: `Esc` / `A`
+- Move Cursor: `↑/↓ Arrow`
+- View Info: `i` (进入 INFO View 查看详细信息)
+- Unarchive Item: `u`
 
 
 ### Input Mode 输入模式
 
-InputPurpose:
-- STRUCTURE_ADD
-- RENAME_ITEM
-- EDIT_INFO_FIELD
+```text
+(Input Purpose Prompt)  (Title / Name Input)        [Date Edit]
+[Field Edit]  (Description / Content Input)
+```
 
+- Input Purpose Prompt: 
+- 
+
+例如：
+```text
+[New Project] Project: Update Resume  [Started 2025-12-01 | Deadline 2026-01-03]
+[Focusing] [♥ ▂  ⭑ █  ⚡ ▅]  Update the resume for 2026 job application
+```
+
+- Switch Field: `Tab` / `Shift+Tab`
+- Adjust Value: `Space` / `+` / `-` / `Up` / `Down`
+- Input Content (Title/Description/Content): `Any`
 - Cancel Input: `Escape` / `Ctrl+G`
 - Confirm Input: `Enter`
-- Input: `Any`
+
+
+▁ ▂ ▃ ▄ ▅ ▆ ▇ █
 
 
 
 
 
-### TUI 界面 (prompt-toolkit)
-
-```text
-┌─ Track 1: Work ────────────────────┐
-│  ▸ Project 1: Backend              │
-│    Project 2: Frontend             │
-└────────────────────────────────────┘
-
-┌─ Track 2: Personal ────────────────┐
-│    Project 1: Blog                 │
-└────────────────────────────────────┘
-```
-
-- 主界面（Track & Project界面）：纵向显示 Track 及其 Project 层级视图，主界面不显示item
-    - Track 用矩形方框显示，Track Name 显示在方框左上角：**Track <index>: <Track Name>**
-    - Project 显示在对应 Track 的方框内：**Project <index>: <Project Name>**
-    - 用不同颜色区分选中的Track和未选中的Track
-- Projects 界面：
-    - 纵向显示当前 Track 的 Projects，不显示Item：**Project <index>: <Project Name>**
-- Items 界面：
-    - 纵向显示当前 Project 的 Items：**Item <index>: <Item Content>**
-- 退出：`Ctrl+C` / `Ctrl+D` / [`q`(提示是否退出，按 q 确认)]
-
-**NORMAL MODE**
-
-```bash
-uparrow / w
-    up (在 Track/Project/Item 之间移动)
-downarrow / s
-    down (在 Track/Project/Item 之间移动)
-left / a
-    left (进入上一级，例如从 Project 回到 Track)
-right / d
-    right (进入下一级，例如从 Track 进入 Project)
-space （item界面）
-    切换状态 undo/done
-backspace / delete
-    delete (删除当前选中的 Track/Project/Item，提示是否删除，再按一次 backspace/delete 确认删除)
-+ / =
-    add (添加 Track/Project/Item，直接在目标处空行，闪烁光标输入名称，按回车确认，ESC 取消)
-
-> / :
-    进入命令模式 COMMAND MODE
-```
 
 **COMMAND MODE**
 
@@ -264,6 +344,8 @@ backspace / delete
 
 
 ## CLI 命令设计（计划在未来实现，预计 v0.0.5）
+
+Actions:
 
 ```bash
 todo                        # Open TUI (default)
@@ -370,28 +452,39 @@ todo unarchive takeaway <id>                       # Unarchive a takeaway
 
 ### 项目结构
 
-```
-mukitodo/
-├── pyproject.toml          # uv 项目配置与依赖
-├── README.md               # 本文档
+```text
+.
+├── pyproject.toml          # uv environment management (project config)
+├── README.md               # README documentation
+├── CHANGELOG.md            # CHANGELOG documentation
+├── main.py                 # Legacy entry point (optional)
 ├── mukitodo/
-│   ├── __init__.py         # 初始化
-│   ├── cli.py              # 命令行入口 (todo 命令)
-│   ├── tui/                # prompt-toolkit TUI 应用
-│   │   ├── __init__.py     # 初始化
-│   │   ├── states/         # 状态管理
-│   │   │   ├── app_state.py        # 顶层状态协调器
-│   │   │   ├── now_state.py        # NOW 视图状态
-│   │   │   ├── structure_state.py  # STRUCTURE 视图状态
-│   │   │   ├── info_state.py       # INFO 视图状态
-│   │   │   └── message_holder.py   # 消息管理
-│   │   ├── renderer.py     # 渲染器（纯渲染层）
-│   │   └── app.py          # 按键绑定 + 布局 + 启动入口
-│   ├── commands.py         # CLI / 命令解析与执行（无状态）未完成
-│   ├── actions.py          # 业务操作
-│   ├── database.py         # 数据库连接与初始化
-│   ├── models.py           # SQLAlchemy/SQLite ORM 模型定义
+│   ├── __init__.py         # Package init
+│   ├── cli.py              # CLI entry point ("todo" command)
+│   ├── actions.py          # Business logic
+│   ├── database.py         # Database connection & setup
+│   ├── models.py           # SQLAlchemy ORM models
+│   └── tui/                # prompt-toolkit Terminal UI Application
+│       ├── __init__.py     # TUI package core
+│       ├── app.py          # Key bindings, layout, TUI app launcher
+│       ├── layout_manager.py    # Dynamic layout computation
+│       ├── renderer.py     # Pure rendering routines
+│       ├── states/         # State management modules
+│       │   ├── app_state.py        # Top-level state coordinator
+│       │   ├── input_state.py      # Input MODE state
+│       │   ├── now_state.py        # NOW VIEW state
+│       │   ├── structure_state.py  # STRUCTURE VIEW state
+│       │   ├── info_state.py       # INFO VIEW state
+│       │   ├── timeline_state.py   # TIMELINE VIEW state
+│       │   ├── archive_state.py    # ARCHIVE VIEW state
+│       │   ├── box_state.py        # BOX VIEW state
+│       │   └── message_holder.py   # Message/Result manager
 ```
+
+
+**代码风格及规范**
+
+自解释，减少不必要的注释，仅在必要时使用英文注释；如无必要不使用缩写，使用全称（例如 current_project_id 而不是 cur_proj_id）
 
 ### 架构设计哲学
 
@@ -498,9 +591,6 @@ mukitodo/
 
 
 
-**代码风格及规范**
-
-自解释，减少不必要的注释，仅在必要时使用英文注释；如无必要不使用缩写，使用全称（例如 current_project_id 而不是 cur_proj_id）
 
 
 ### 环境管理 (uv)

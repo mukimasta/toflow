@@ -14,6 +14,17 @@ class Result:
 
 EmptyResult = Result(None, None, "")
 
+def _ensure_tui_meta(d: dict) -> dict:
+    """
+    Ensure a dict has a dedicated namespace for TUI-only computed fields.
+
+    We keep these under a reserved key to avoid colliding with real model columns.
+    """
+    if "_tui" not in d or not isinstance(d.get("_tui"), dict):
+        d["_tui"] = {}
+    return d["_tui"]
+
+
 
 # == Status Ordering Helpers ==============================================
 
@@ -46,6 +57,17 @@ def _get_todo_status_order():
         (TodoItem.status == "sleeping", 2),
         (TodoItem.status == "done", 3),
         (TodoItem.status == "cancelled", 4),
+        else_=5
+    )
+
+def _get_idea_status_order():
+    """Return SQLAlchemy CASE expression for idea status ordering."""
+    from sqlalchemy import case
+    return case(
+        (IdeaItem.status == "active", 1),
+        (IdeaItem.status == "sleeping", 2),
+        (IdeaItem.status == "deprecated", 3),
+        (IdeaItem.status == "promoted", 4),
         else_=5
     )
 
@@ -136,7 +158,7 @@ def list_tracks_id() -> Result:
     
     return Result(True, data, f"Found {len(tracks)} tracks")
 
-def list_tracks_dict() -> Result:
+def list_tracks_dict(include_tui_meta: bool = False) -> Result:
     '''List all tracks as dict, sorted by status then by ID. Result.data: list[dict]'''
     with db_session() as session:
         tracks = session.query(Track)\
@@ -144,6 +166,22 @@ def list_tracks_dict() -> Result:
             .order_by(_get_track_status_order(), Track.id)\
             .all()
         data = [t.to_dict() for t in tracks]
+
+        if include_tui_meta and data:
+            from sqlalchemy import func
+
+            track_ids = [d["id"] for d in data]
+            rows = (
+                session.query(Project.track_id, func.count(Project.id))
+                .filter(Project.track_id.in_(track_ids), Project.archived == False)  # noqa: E712
+                .group_by(Project.track_id)
+                .all()
+            )
+            child_project_count_map = {track_id: int(cnt) for track_id, cnt in rows}
+
+            for d in data:
+                meta = _ensure_tui_meta(d)
+                meta["child_project_count"] = child_project_count_map.get(d["id"], 0)
 
     return Result(True, data, f"Found {len(tracks)} tracks")
 
@@ -343,7 +381,7 @@ def list_projects_id(track_id: int) -> Result:
 
     return Result(True, data, f"Found {len(projects)} projects")
 
-def list_projects_dict(track_id: int) -> Result:
+def list_projects_dict(track_id: int, include_tui_meta: bool = False) -> Result:
     '''List all projects as dict, sorted by status then by ID. Result.data: list[dict]'''
     with db_session() as session:
         projects = session.query(Project)\
@@ -351,6 +389,69 @@ def list_projects_dict(track_id: int) -> Result:
             .order_by(_get_project_status_order(), Project.id)\
             .all()
         data = [p.to_dict() for p in projects]
+
+        if include_tui_meta and data:
+            from sqlalchemy import func
+
+            project_ids = [d["id"] for d in data]
+
+            # --- Child todo count (not displayed yet, but reserved for future) ---
+            todo_rows = (
+                session.query(TodoItem.project_id, func.count(TodoItem.id))
+                .filter(TodoItem.project_id.in_(project_ids), TodoItem.archived == False)  # noqa: E712
+                .group_by(TodoItem.project_id)
+                .all()
+            )
+            child_todo_count_map = {pid: int(cnt) for pid, cnt in todo_rows}
+
+            # --- Session count: direct on project + via todos under the project ---
+            direct_session_rows = (
+                session.query(NowSession.project_id, func.count(NowSession.id))
+                .filter(
+                    NowSession.project_id.in_(project_ids),
+                    NowSession.ended_at_utc.isnot(None),
+                )
+                .group_by(NowSession.project_id)
+                .all()
+            )
+            direct_session_map = {pid: int(cnt) for pid, cnt in direct_session_rows}
+
+            todo_session_rows = (
+                session.query(TodoItem.project_id, func.count(NowSession.id))
+                .join(NowSession, NowSession.todo_item_id == TodoItem.id)
+                .filter(
+                    TodoItem.project_id.in_(project_ids),
+                    NowSession.ended_at_utc.isnot(None),
+                )
+                .group_by(TodoItem.project_id)
+                .all()
+            )
+            todo_session_map = {pid: int(cnt) for pid, cnt in todo_session_rows}
+
+            # --- Takeaway count: direct on project + via todos under the project ---
+            direct_takeaway_rows = (
+                session.query(Takeaway.project_id, func.count(Takeaway.id))
+                .filter(Takeaway.project_id.in_(project_ids))
+                .group_by(Takeaway.project_id)
+                .all()
+            )
+            direct_takeaway_map = {pid: int(cnt) for pid, cnt in direct_takeaway_rows}
+
+            todo_takeaway_rows = (
+                session.query(TodoItem.project_id, func.count(Takeaway.id))
+                .join(Takeaway, Takeaway.todo_item_id == TodoItem.id)
+                .filter(TodoItem.project_id.in_(project_ids))
+                .group_by(TodoItem.project_id)
+                .all()
+            )
+            todo_takeaway_map = {pid: int(cnt) for pid, cnt in todo_takeaway_rows}
+
+            for d in data:
+                pid = d["id"]
+                meta = _ensure_tui_meta(d)
+                meta["child_todo_count"] = child_todo_count_map.get(pid, 0)
+                meta["session_count"] = direct_session_map.get(pid, 0) + todo_session_map.get(pid, 0)
+                meta["takeaway_count"] = direct_takeaway_map.get(pid, 0) + todo_takeaway_map.get(pid, 0)
 
     return Result(True, data, f"Found {len(projects)} projects")
 
@@ -614,7 +715,7 @@ def list_structure_todos(project_id: int) -> Result:
 
     return Result(True, data, f"Found {len(todos)} todos")
 
-def list_structure_todos_dict(project_id: int) -> Result:
+def list_structure_todos_dict(project_id: int, include_tui_meta: bool = False) -> Result:
     '''List all structure todo items as dict, sorted by status then by ID. Result.data: list[dict]'''
     with db_session() as session:
         todos = session.query(TodoItem)\
@@ -622,6 +723,36 @@ def list_structure_todos_dict(project_id: int) -> Result:
             .order_by(_get_todo_status_order(), TodoItem.id)\
             .all()
         data = [t.to_dict() for t in todos]
+
+        if include_tui_meta and data:
+            from sqlalchemy import func
+
+            todo_ids = [d["id"] for d in data]
+
+            session_rows = (
+                session.query(NowSession.todo_item_id, func.count(NowSession.id))
+                .filter(
+                    NowSession.todo_item_id.in_(todo_ids),
+                    NowSession.ended_at_utc.isnot(None),
+                )
+                .group_by(NowSession.todo_item_id)
+                .all()
+            )
+            session_count_map = {tid: int(cnt) for tid, cnt in session_rows}
+
+            takeaway_rows = (
+                session.query(Takeaway.todo_item_id, func.count(Takeaway.id))
+                .filter(Takeaway.todo_item_id.in_(todo_ids))
+                .group_by(Takeaway.todo_item_id)
+                .all()
+            )
+            takeaway_count_map = {tid: int(cnt) for tid, cnt in takeaway_rows}
+
+            for d in data:
+                tid = d["id"]
+                meta = _ensure_tui_meta(d)
+                meta["session_count"] = session_count_map.get(tid, 0)
+                meta["takeaway_count"] = takeaway_count_map.get(tid, 0)
 
     return Result(True, data, f"Found {len(todos)} todos")
 
@@ -631,6 +762,53 @@ def list_box_todos() -> Result:
         todos = session.query(TodoItem).filter_by(project_id=None, archived=False).all()
         data = [t.id for t in todos]
     
+    return Result(True, data, f"Found {len(todos)} box todos")
+
+def list_box_todos_dict(include_tui_meta: bool = False) -> Result:
+    """
+    List all box todo items as dict, sorted by status then by ID.
+    Box Todo is represented by TodoItem.project_id IS NULL.
+    Result.data: list[dict]
+    """
+    with db_session() as session:
+        todos = (
+            session.query(TodoItem)
+            .filter(TodoItem.project_id.is_(None), TodoItem.archived == False)  # noqa: E712
+            .order_by(_get_todo_status_order(), TodoItem.id)
+            .all()
+        )
+        data = [t.to_dict() for t in todos]
+
+        if include_tui_meta and data:
+            from sqlalchemy import func
+
+            todo_ids = [d["id"] for d in data]
+
+            session_rows = (
+                session.query(NowSession.todo_item_id, func.count(NowSession.id))
+                .filter(
+                    NowSession.todo_item_id.in_(todo_ids),
+                    NowSession.ended_at_utc.isnot(None),
+                )
+                .group_by(NowSession.todo_item_id)
+                .all()
+            )
+            session_count_map = {tid: int(cnt) for tid, cnt in session_rows}
+
+            takeaway_rows = (
+                session.query(Takeaway.todo_item_id, func.count(Takeaway.id))
+                .filter(Takeaway.todo_item_id.in_(todo_ids))
+                .group_by(Takeaway.todo_item_id)
+                .all()
+            )
+            takeaway_count_map = {tid: int(cnt) for tid, cnt in takeaway_rows}
+
+            for d in data:
+                tid = d["id"]
+                meta = _ensure_tui_meta(d)
+                meta["session_count"] = session_count_map.get(tid, 0)
+                meta["takeaway_count"] = takeaway_count_map.get(tid, 0)
+
     return Result(True, data, f"Found {len(todos)} box todos")
 
 def get_todo_dict(todo_item_id: int) -> Result:
@@ -855,7 +1033,19 @@ def list_idea_items() -> Result:
     
     return Result(True, data, f"Found {len(ideas)} ideas")
 
-def get_idea_item(idea_item_id: int) -> Result:
+def list_idea_items_dict() -> Result:
+    """List all idea items as dict, sorted by status then by ID. Result.data: list[dict]."""
+    with db_session() as session:
+        ideas = (
+            session.query(IdeaItem)
+            .filter(IdeaItem.archived == False)  # noqa: E712
+            .order_by(_get_idea_status_order(), IdeaItem.id)
+            .all()
+        )
+        data = [i.to_dict() for i in ideas]
+    return Result(True, data, f"Found {len(ideas)} ideas")
+
+def get_idea_item_dict(idea_item_id: int) -> Result:
     '''Get an idea item by id. Result.data: idea dict'''
     with db_session() as session:
         idea = session.query(IdeaItem).filter_by(id=idea_item_id).first()
@@ -959,6 +1149,10 @@ def promote_idea_item_to_project(idea_item_id: int, track_id: int) -> Result:
         idea = session.query(IdeaItem).filter_by(id=idea_item_id).first()
         if not idea:
             return Result(False, None, f"Idea {idea_item_id} not found")
+
+        # Guard: already promoted ideas cannot be promoted again.
+        if idea.status == "promoted" or idea.promoted_to_project_id is not None:
+            return Result(False, None, f"Idea '{idea.name}' is already promoted")
         
         # Create project from idea
         project = Project(
@@ -1187,7 +1381,7 @@ def list_takeaways(track_id: int) -> Result:
 
 # more list actions in different contexts
 
-def get_takeaway(takeaway_id: int) -> Result:
+def get_takeaway_dict(takeaway_id: int) -> Result:
     '''Get a takeaway by id. Result.data: takeaway dict'''
     with db_session() as session:
         takeaway = session.query(Takeaway).filter_by(id=takeaway_id).first()
@@ -1247,15 +1441,145 @@ def update_takeaway_date(takeaway_id: int, date: date_type) -> Result:
         takeaway = session.query(Takeaway).filter_by(id=takeaway_id).first()
         if not takeaway:
             return Result(False, None, f"Takeaway {takeaway_id} not found")
-        
+
         takeaway_title = takeaway.title
         takeaway.date = date
-    
+
     return Result(True, date, f"Takeaway '{takeaway_title}' date updated")
 
 
-# == General Functions ========================================================
+# == Timeline Actions ========================================================
 
+def list_timeline_records() -> Result:
+    '''
+    List all Sessions and Takeaways for Timeline View.
+
+    Returns:
+        Result.data: list[tuple[dict | None, list[dict]]]
+        Each element is (session_dict | None, [takeaway_dict, ...])
+
+        - session_dict is not None and takeaways is not empty: Session with linked Takeaways
+        - session_dict is not None and takeaways is empty: Session without Takeaways
+        - session_dict is None and takeaways is not empty: Standalone Takeaways (no linked Session)
+
+        Sorted by time descending (session.ended_at_utc or takeaway.created_at_utc for standalone)
+
+        session_dict contains extra field:
+        - parent_info: str  # "Track/Project" or "Track/Project/Todo"
+
+        takeaway_dict contains extra field:
+        - parent_info: str  # For standalone takeaways only
+    '''
+    with db_session() as session:
+        # Query all NowSessions with ended_at_utc (completed sessions)
+        all_sessions = session.query(NowSession)\
+            .filter(NowSession.ended_at_utc.isnot(None))\
+            .order_by(NowSession.ended_at_utc.desc())\
+            .all()
+
+        # Query all Takeaways
+        all_takeaways = session.query(Takeaway).all()
+
+        # Build a mapping of session_id -> list of takeaways
+        session_takeaways_map: dict[int, list] = {}
+        standalone_takeaways: list = []
+
+        for takeaway in all_takeaways:
+            if takeaway.now_session_id is not None:
+                if takeaway.now_session_id not in session_takeaways_map:
+                    session_takeaways_map[takeaway.now_session_id] = []
+                session_takeaways_map[takeaway.now_session_id].append(takeaway)
+            else:
+                standalone_takeaways.append(takeaway)
+
+        # Helper function to build parent_info for session
+        def get_session_parent_info(ns: NowSession) -> str:
+            parts = []
+            if ns.todo_item_id:
+                todo = session.query(TodoItem).filter_by(id=ns.todo_item_id).first()
+                if todo and todo.project_id:
+                    project = session.query(Project).filter_by(id=todo.project_id).first()
+                    if project:
+                        track = session.query(Track).filter_by(id=project.track_id).first()
+                        if track:
+                            parts = [track.name, project.name, todo.name]
+                        else:
+                            parts = [project.name, todo.name]
+                else:
+                    parts = [todo.name if todo else "Unknown"]
+            elif ns.project_id:
+                project = session.query(Project).filter_by(id=ns.project_id).first()
+                if project:
+                    track = session.query(Track).filter_by(id=project.track_id).first()
+                    if track:
+                        parts = [track.name, project.name]
+                    else:
+                        parts = [project.name]
+            return "/".join(parts) if parts else "Unknown"
+
+        # Helper function to build parent_info for standalone takeaway
+        def get_takeaway_parent_info(t: Takeaway) -> str:
+            parts = []
+            if t.todo_item_id:
+                todo = session.query(TodoItem).filter_by(id=t.todo_item_id).first()
+                if todo and todo.project_id:
+                    project = session.query(Project).filter_by(id=todo.project_id).first()
+                    if project:
+                        track = session.query(Track).filter_by(id=project.track_id).first()
+                        if track:
+                            parts = [track.name, project.name, todo.name]
+            elif t.project_id:
+                project = session.query(Project).filter_by(id=t.project_id).first()
+                if project:
+                    track = session.query(Track).filter_by(id=project.track_id).first()
+                    if track:
+                        parts = [track.name, project.name]
+            elif t.track_id:
+                track = session.query(Track).filter_by(id=t.track_id).first()
+                if track:
+                    parts = [track.name]
+            return "/".join(parts) if parts else "Unknown"
+
+        # Build result list
+        result_records: list[tuple[dict | None, list[dict], datetime]] = []
+
+        # Add sessions with their takeaways
+        for ns in all_sessions:
+            session_dict = ns.to_dict()
+            session_dict["parent_info"] = get_session_parent_info(ns)
+
+            takeaways = session_takeaways_map.get(ns.id, [])
+            # Sort takeaways by created_at_utc
+            takeaways.sort(key=lambda t: t.created_at_utc)
+            takeaway_dicts = [t.to_dict() for t in takeaways]
+
+            # Use ended_at_utc for sorting (already filtered for non-None)
+            sort_time = ns.ended_at_utc
+            if sort_time is not None:
+                result_records.append((session_dict, takeaway_dicts, sort_time))
+
+        # Add standalone takeaways
+        for t in standalone_takeaways:
+            takeaway_dict = t.to_dict()
+            takeaway_dict["parent_info"] = get_takeaway_parent_info(t)
+
+            # Use created_at_utc for sorting
+            sort_time = t.created_at_utc
+            result_records.append((None, [takeaway_dict], sort_time))
+
+        # Sort all records by time descending
+        result_records.sort(key=lambda x: x[2], reverse=True)
+
+        # Remove the sort_time from the final result
+        final_data = [(rec[0], rec[1]) for rec in result_records]
+
+    session_count = len(all_sessions)
+    takeaway_count = len(all_takeaways)
+    return Result(True, final_data, f"Found {session_count} sessions and {takeaway_count} takeaways")
+
+
+
+# == Archive View ============================================================
 
 def list_archived_structure() -> Result:
     '''
@@ -1332,13 +1656,28 @@ def list_archived_structure() -> Result:
             .order_by(IdeaItem.id)\
             .all()
 
+        # Query all archived box todos (project_id is NULL)
+        archived_box_todos = (
+            session.query(TodoItem)
+            .filter(TodoItem.project_id.is_(None), TodoItem.archived == True)  # noqa: E712
+            .order_by(TodoItem.id)
+            .all()
+        )
+
         result_data = {
             "tracks": tracks_with_archived_content,
-            "ideas": [idea.to_dict() for idea in archived_ideas]
+            "ideas": [idea.to_dict() for idea in archived_ideas],
+            "box_todos": [todo.to_dict() for todo in archived_box_todos],
         }
 
-        return Result(True, result_data, f"Found {len(tracks_with_archived_content)} tracks and {len(archived_ideas)} ideas with archived content")
+        return Result(
+            True,
+            result_data,
+            f"Found {len(tracks_with_archived_content)} tracks, {len(archived_ideas)} ideas and {len(archived_box_todos)} box todos with archived content",
+        )
 
+
+# == Debugging Functions ======================================================
 
 def set_item_property(item_id: int, item_type: str, field_name: str, value: Any) -> Result:
     '''DO NOT EDIT!! ONLY FOR DEBUGGING: Set a property of an item. Result.data: (new) value'''

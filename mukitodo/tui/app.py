@@ -1,47 +1,41 @@
 import asyncio
 from prompt_toolkit import Application
-from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import Layout, HSplit, VSplit, Window, FormattedTextControl, BufferControl, ConditionalContainer, Dimension
-from prompt_toolkit.styles import Style
 from prompt_toolkit.filters import Condition
 
-from .states.app_state import AppState, UIMode, View, InputPurpose, PendingAction
-from .states.structure_state import StructureLevel, StructureState
-from .states.now_state import TimerStateEnum, NowState
-from .states.info_state import InfoState
+from mukitodo.tui.states.box_state import BoxSubview
+
+from .states.app_state import AppState, UIMode, View, ConfirmAction
+from .states.now_state import TimerStateEnum
+from .states.input_state import InputPurpose
 from .renderer import Renderer
-
-
-# ========================================
-# Layout Constants
-# ========================================
-
-NOW_BOX_WIDTH = 60
-NOW_PADDING_LEFT_RIGHT_WEIGHT = 6
-NOW_PADDING_TOP_WEIGHT = 45
-NOW_PADDING_BOTTOM_WEIGHT = 55
+from .layout_manager import LayoutManager
 
 
 def run():
     state = AppState()
     renderer = Renderer(state)
-    input_buffer = Buffer()
+    layout_manager = LayoutManager(state=state, renderer=renderer)
 
     # ========================================
     # Key Bindings
     # ========================================
     kb = KeyBindings()
 
-    is_normal_mode = Condition(lambda: state.ui_mode_state.mode == UIMode.NORMAL)
-    is_command_mode = Condition(lambda: state.ui_mode_state.mode == UIMode.COMMAND)
-    is_input_mode = Condition(lambda: state.ui_mode_state.mode == UIMode.INPUT)
-    is_confirm_mode = Condition(lambda: state.ui_mode_state.mode == UIMode.CONFIRM)
+    is_normal_mode = Condition(lambda: state.ui_mode == UIMode.NORMAL)
+    is_command_mode = Condition(lambda: state.ui_mode == UIMode.COMMAND)
+    is_input_mode = Condition(lambda: state.ui_mode == UIMode.INPUT)
+    is_confirm_mode = Condition(lambda: state.ui_mode == UIMode.CONFIRM)
 
     is_now_view = Condition(lambda: state.view == View.NOW)
     is_structure_view = Condition(lambda: state.view == View.STRUCTURE)
     is_info_view = Condition(lambda: state.view == View.INFO)
     is_archive_view = Condition(lambda: state.view == View.ARCHIVE)
+    is_timeline_view = Condition(lambda: state.view == View.TIMELINE)
+    is_box_view = Condition(lambda: state.view == View.BOX)
+
+    is_input_text_field = Condition(lambda: state.ui_mode == UIMode.INPUT and state.input_state.is_text_input_field())
+    is_input_non_text_field = Condition(lambda: state.ui_mode == UIMode.INPUT and (not state.input_state.is_text_input_field()))
 
 
     # == General Key Bindings ==
@@ -55,18 +49,15 @@ def run():
 
     @kb.add("q", filter=is_normal_mode)
     def _(event):
-        state.ask_confirm(PendingAction.QUIT)
-    @kb.add("q", filter=is_confirm_mode)
-    def _(event):
-        confirm_action = state.ui_mode_state.confirm_action
-        assert confirm_action is not None
-        if confirm_action == PendingAction.QUIT:
-            event.app.exit()
-        state.cancel_confirm()
+        state.ask_confirm(ConfirmAction.QUIT)
 
     @kb.add("tab", filter=is_normal_mode)
     def _(event):
         state.switch_view()
+
+    @kb.add("b", filter=is_normal_mode)
+    def _(event):
+        state.toggle_box_view()
 
     @kb.add("A", filter=is_normal_mode)
     def _(event):
@@ -93,6 +84,9 @@ def run():
         state.structure_state.move_cursor(1)
     @kb.add("right", filter=is_normal_mode & is_structure_view)
     def _(event):
+        if state.has_pending_transfer():
+            state.handle_structure_right_for_transfer()
+            return
         state.structure_state.select_current()
     @kb.add("left", filter=is_normal_mode & is_structure_view)
     def _(event):
@@ -105,31 +99,21 @@ def run():
     @kb.add("=", filter=is_normal_mode & is_structure_view)
     @kb.add("+", filter=is_normal_mode & is_structure_view)
     def _(event):
-        input_buffer.reset()
-        default_value = state.start_input_and_return_default_value(InputPurpose.STRUCTURE_ADD_ITEM)
-        if default_value is not None:
-            input_buffer.reset()
-            input_buffer.text = default_value
-            input_buffer.cursor_position = len(default_value)
+        state.start_input(InputPurpose.ADD)
+        if state.ui_mode == UIMode.INPUT:
+            layout_manager.sync_all_text_buffers_from_state()
+            layout_manager.focus_current_field(event.app.layout)
 
     @kb.add("r", filter=is_normal_mode & is_structure_view)
     def _(event):
-        default_value = state.start_input_and_return_default_value(InputPurpose.STRUCTURE_RENAME_ITEM)
-        if default_value is not None:
-            input_buffer.reset()
-            input_buffer.text = default_value
-            input_buffer.cursor_position = len(default_value)
+        state.start_input(InputPurpose.EDIT)
+        if state.ui_mode == UIMode.INPUT:
+            layout_manager.sync_all_text_buffers_from_state()
+            layout_manager.focus_current_field(event.app.layout)
     
     @kb.add("backspace", filter=is_normal_mode & is_structure_view)
     def _(event):
-        state.ask_confirm(PendingAction.DELETE_STRUCTURE_ITEM)
-    @kb.add("backspace", filter=is_confirm_mode & is_structure_view)
-    def _(event):
-        confirm_action = state.ui_mode_state.confirm_action
-        assert confirm_action is not None
-        if confirm_action == PendingAction.DELETE_STRUCTURE_ITEM:
-            state.structure_state.delete_selected_item()
-        state.cancel_confirm()
+        state.ask_confirm(ConfirmAction.DELETE_STRUCTURE_ITEM)
 
     @kb.add("space", filter=is_normal_mode & is_structure_view)
     def _(event):
@@ -154,25 +138,20 @@ def run():
 
     @kb.add("a", filter=is_normal_mode & is_structure_view)
     def _(event):
-        state.ask_confirm(PendingAction.ARCHIVE_STRUCTURE_ITEM)
-    @kb.add("a", filter=is_confirm_mode & is_structure_view)
-    def _(event):
-        confirm_action = state.ui_mode_state.confirm_action
-        assert confirm_action is not None
-        if confirm_action == PendingAction.ARCHIVE_STRUCTURE_ITEM:
-            state.structure_state.archive_selected_item()
-        state.cancel_confirm()
+        state.ask_confirm(ConfirmAction.ARCHIVE_STRUCTURE_ITEM)
 
     @kb.add("enter", filter=is_normal_mode & is_structure_view)
     def _(event):
-        state.ask_confirm(PendingAction.ENTER_NOW_WITH_STRUCTURE_ITEM)
-    @kb.add("enter", filter=is_confirm_mode & is_structure_view)
+        if state.has_pending_transfer():
+            state.ask_confirm(ConfirmAction.CONFIRM_BOX_TRANSFER)
+            return
+        state.ask_confirm(ConfirmAction.ENTER_NOW_WITH_STRUCTURE_ITEM)
+
+    @kb.add("escape", filter=is_normal_mode & is_structure_view)
     def _(event):
-        confirm_action = state.ui_mode_state.confirm_action
-        assert confirm_action is not None
-        if confirm_action == PendingAction.ENTER_NOW_WITH_STRUCTURE_ITEM:
-            state.enter_now_with_structure_item()
-        state.cancel_confirm()
+        if state.has_pending_transfer():
+            state.cancel_pending_transfer()
+            return
 
     # Normal Mode & NOW View
 
@@ -199,15 +178,60 @@ def run():
 
     @kb.add("enter", filter=is_normal_mode & is_now_view)
     def _(event):
-        state.ask_confirm(PendingAction.FINISH_SESSION)
-    
-    @kb.add("enter", filter=is_confirm_mode & is_now_view)
+        state.ask_confirm(ConfirmAction.FINISH_SESSION)
+
+    # Normal Mode & BOX View
+
+    @kb.add("up", filter=is_normal_mode & is_box_view)
     def _(event):
-        confirm_action = state.ui_mode_state.confirm_action
-        assert confirm_action is not None
-        if confirm_action == PendingAction.FINISH_SESSION:
-            state.finish_session()
-        state.cancel_confirm()
+        state.box_state.move_cursor(-1)
+
+    @kb.add("down", filter=is_normal_mode & is_box_view)
+    def _(event):
+        state.box_state.move_cursor(1)
+
+    @kb.add("[", filter=is_normal_mode & is_box_view)
+    def _(event):
+        state.box_state.set_subview(BoxSubview.TODOS)
+
+    @kb.add("]", filter=is_normal_mode & is_box_view)
+    def _(event):
+        state.box_state.set_subview(BoxSubview.IDEAS)
+
+    @kb.add("i", filter=is_normal_mode & is_box_view)
+    def _(event):
+        state.open_item_info()
+
+    @kb.add("=", filter=is_normal_mode & is_box_view)
+    @kb.add("+", filter=is_normal_mode & is_box_view)
+    def _(event):
+        state.start_input(InputPurpose.ADD)
+        if state.ui_mode == UIMode.INPUT:
+            layout_manager.sync_all_text_buffers_from_state()
+            layout_manager.focus_current_field(event.app.layout)
+
+    @kb.add("r", filter=is_normal_mode & is_box_view)
+    def _(event):
+        state.start_input(InputPurpose.EDIT)
+        if state.ui_mode == UIMode.INPUT:
+            layout_manager.sync_all_text_buffers_from_state()
+            layout_manager.focus_current_field(event.app.layout)
+
+    @kb.add("backspace", filter=is_normal_mode & is_box_view)
+    def _(event):
+        state.ask_confirm(ConfirmAction.DELETE_BOX_ITEM)
+
+    @kb.add("a", filter=is_normal_mode & is_box_view)
+    def _(event):
+        state.ask_confirm(ConfirmAction.ARCHIVE_BOX_ITEM)
+
+    @kb.add("m", filter=is_normal_mode & is_box_view)
+    def _(event):
+        state.start_pending_move_from_box()
+
+    @kb.add("p", filter=is_normal_mode & is_box_view)
+    def _(event):
+        state.start_pending_promote_from_box()
 
     # INFO view specific key bindings
     
@@ -223,14 +247,6 @@ def run():
     @kb.add("down", filter=is_normal_mode & is_info_view)
     def _(event):
         state.info_state.move_cursor(1)
-    
-    @kb.add("r", filter=is_normal_mode & is_info_view)
-    def _(event):
-        default_value = state.start_input_and_return_default_value(InputPurpose.INFO_EDIT_FIELD)
-        if default_value is not None:
-            input_buffer.reset()
-            input_buffer.text = default_value
-            input_buffer.cursor_position = len(default_value)
 
     # ARCHIVE view specific key bindings
 
@@ -245,28 +261,12 @@ def run():
     @kb.add("u", filter=is_normal_mode & is_archive_view)
     def _(event):
         """Unarchive selected item."""
-        state.ask_confirm(PendingAction.UNARCHIVE_ITEM)
-
-    @kb.add("u", filter=is_confirm_mode & is_archive_view)
-    def _(event):
-        confirm_action = state.ui_mode_state.confirm_action
-        assert confirm_action is not None
-        if confirm_action == PendingAction.UNARCHIVE_ITEM:
-            state.archive_state.unarchive_selected_item()
-        state.cancel_confirm()
+        state.ask_confirm(ConfirmAction.UNARCHIVE_ITEM)
 
     @kb.add("backspace", filter=is_normal_mode & is_archive_view)
     def _(event):
         """Delete selected item permanently."""
-        state.ask_confirm(PendingAction.DELETE_ARCHIVE_ITEM)
-
-    @kb.add("backspace", filter=is_confirm_mode & is_archive_view)
-    def _(event):
-        confirm_action = state.ui_mode_state.confirm_action
-        assert confirm_action is not None
-        if confirm_action == PendingAction.DELETE_ARCHIVE_ITEM:
-            state.archive_state.delete_selected_item()
-        state.cancel_confirm()
+        state.ask_confirm(ConfirmAction.DELETE_ARCHIVE_ITEM)
 
     @kb.add("i", filter=is_normal_mode & is_archive_view)
     def _(event):
@@ -279,165 +279,200 @@ def run():
         """Exit Archive View (return to STRUCTURE)."""
         state.exit_archive_view()
 
+    # TIMELINE view key bindings
 
-    # == Input Mode Key Bindings ==
+    @kb.add("t", filter=is_normal_mode & (is_now_view | is_structure_view))
+    def _(event):
+        """Enter Timeline View from NOW or STRUCTURE view."""
+        state.enter_timeline_view()
+
+    @kb.add("t", filter=is_normal_mode & is_timeline_view)
+    @kb.add("escape", filter=is_normal_mode & is_timeline_view)
+    def _(event):
+        """Exit Timeline View."""
+        state.exit_timeline_view()
+
+    @kb.add("up", filter=is_normal_mode & is_timeline_view)
+    def _(event):
+        state.timeline_state.move_cursor(-1)
+
+    @kb.add("down", filter=is_normal_mode & is_timeline_view)
+    def _(event):
+        state.timeline_state.move_cursor(1)
+
+    @kb.add("i", filter=is_normal_mode & is_timeline_view)
+    def _(event):
+        """View details of selected session or takeaway."""
+        state.open_item_info()
+
+    @kb.add("=", filter=is_normal_mode & is_timeline_view)
+    @kb.add("+", filter=is_normal_mode & is_timeline_view)
+    def _(event):
+        """Create new takeaway for selected session."""
+        if state.timeline_state.get_parent_session_for_selected() is not None:
+            state.start_input(InputPurpose.ADD)
+            if state.ui_mode == UIMode.INPUT:
+                layout_manager.sync_all_text_buffers_from_state()
+                layout_manager.focus_current_field(event.app.layout)
+
+    @kb.add("r", filter=is_normal_mode & is_timeline_view)
+    def _(event):
+        """Edit selected takeaway."""
+        if state.timeline_state.is_selected_takeaway():
+            state.start_input(InputPurpose.EDIT)
+            if state.ui_mode == UIMode.INPUT:
+                layout_manager.sync_all_text_buffers_from_state()
+                layout_manager.focus_current_field(event.app.layout)
+
+    @kb.add("backspace", filter=is_normal_mode & is_timeline_view)
+    def _(event):
+        """Delete selected session or takeaway."""
+        state.ask_confirm(ConfirmAction.DELETE_TIMELINE_ITEM)
+
+
+    # == Input Mode Key Bindings (README Form Input) ==
+
+    @kb.add("tab", filter=is_input_mode)
+    def _(event):
+        layout_manager.save_current_text_field_to_state()
+        state.input_state.move_to_next_field()
+        layout_manager.focus_current_field(event.app.layout)
+
+    @kb.add("s-tab", filter=is_input_mode)
+    def _(event):
+        layout_manager.save_current_text_field_to_state()
+        state.input_state.move_to_prev_field()
+        layout_manager.focus_current_field(event.app.layout)
 
     @kb.add("escape", filter=is_input_mode)
     @kb.add("c-g", filter=is_input_mode)
     def _(event):
         state.cancel_input()
-        input_buffer.reset()
+        layout_manager.reset_buffers()
 
     @kb.add("enter", filter=is_input_mode)
     def _(event):
-        input_value = input_buffer.text.strip()
-        state.confirm_input(input_value)
-        input_buffer.reset()
+        layout_manager.save_current_text_field_to_state()
+        state.confirm_input()
+        if state.ui_mode == UIMode.INPUT:
+            layout_manager.sync_all_text_buffers_from_state()
+            layout_manager.focus_current_field(event.app.layout)
+        else:
+            layout_manager.reset_buffers()
+
+    @kb.add("space", filter=is_input_mode & is_input_non_text_field)
+    def _(event):
+        state.input_state.edit_field_value(direction=None, value=None)
+
+    @kb.add("+", filter=is_input_mode & is_input_non_text_field)
+    @kb.add("=", filter=is_input_mode & is_input_non_text_field)
+    def _(event):
+        state.input_state.edit_field_value(direction=1, value=None)
+
+    @kb.add("-", filter=is_input_mode & is_input_non_text_field)
+    def _(event):
+        state.input_state.edit_field_value(direction=-1, value=None)
+
+    @kb.add("up", filter=is_input_mode & is_input_non_text_field)
+    def _(event):
+        state.input_state.edit_field_value(direction=1, value=None)
+
+    @kb.add("down", filter=is_input_mode & is_input_non_text_field)
+    def _(event):
+        state.input_state.edit_field_value(direction=-1, value=None)
+
+    # In text fields, Up/Down should be no-op (v1 single-line; avoid accidental edits/scroll semantics).
+    @kb.add("up", filter=is_input_mode & is_input_text_field)
+    def _(event):
+        return
+
+    @kb.add("down", filter=is_input_mode & is_input_text_field)
+    def _(event):
+        return
 
 
     # == Confirm Mode Key Bindings ==
-    
+
+    def _confirm_finish_session(event) -> None:
+        """
+        Confirm handler for NOW finish-session flow.
+        Keep legacy behavior: if finishing a session enters INPUT mode, we immediately
+        sync buffers and focus the current field.
+        """
+        state.finish_session()
+        if state.ui_mode == UIMode.INPUT:
+            layout_manager.sync_all_text_buffers_from_state()
+            layout_manager.focus_current_field(event.app.layout)
+
+    _confirm_handlers = {
+        ConfirmAction.QUIT: lambda e: e.app.exit(),
+        ConfirmAction.DELETE_STRUCTURE_ITEM: lambda e: state.structure_state.delete_selected_item(),
+        ConfirmAction.ARCHIVE_STRUCTURE_ITEM: lambda e: state.structure_state.archive_selected_item(),
+        ConfirmAction.DELETE_BOX_ITEM: lambda e: state.box_state.delete_selected_item(),
+        ConfirmAction.ARCHIVE_BOX_ITEM: lambda e: state.box_state.archive_selected_item(),
+        ConfirmAction.ENTER_NOW_WITH_STRUCTURE_ITEM: lambda e: state.enter_now_with_structure_item(),
+        ConfirmAction.CONFIRM_BOX_TRANSFER: lambda e: state.confirm_pending_transfer_in_structure(),
+        ConfirmAction.FINISH_SESSION: _confirm_finish_session,
+        ConfirmAction.UNARCHIVE_ITEM: lambda e: state.unarchive_item_and_maybe_jump(),
+        ConfirmAction.DELETE_ARCHIVE_ITEM: lambda e: state.archive_state.delete_selected_item(),
+        ConfirmAction.DELETE_TIMELINE_ITEM: lambda e: state.timeline_state.delete_selected_item(),
+    }
+
+    @kb.add("enter", filter=is_confirm_mode)
+    @kb.add("backspace", filter=is_confirm_mode)
+    @kb.add("up", filter=is_confirm_mode)
+    @kb.add("down", filter=is_confirm_mode)
+    @kb.add("left", filter=is_confirm_mode)
+    @kb.add("right", filter=is_confirm_mode)
     @kb.add("<any>", filter=is_confirm_mode)
     def _(event):
-        state.cancel_confirm()
+        """
+        Single confirm dispatcher:
+        - Press the same key again to confirm.
+        - Any other key cancels.
+
+        View is intentionally ignored: we only use state.confirm_action.
+        """
+        confirm_action = state.confirm_action
+        if confirm_action is None:
+            state.exit_confirm()
+            return
+
+        def _normalize_confirm_key(key: str) -> str:
+            """
+            Normalize prompt-toolkit key strings for confirm matching.
+
+            Some terminals report Enter/Backspace as control sequences:
+            - Enter: "c-m"
+            - Backspace: "c-h"
+            We canonicalize these to match ConfirmAction.key values ("enter"/"backspace").
+            """
+            return {
+                "c-m": "enter",
+                "c-h": "backspace",
+            }.get(key, key)
+
+        # Guard: <any> may occasionally provide an empty key_sequence.
+        if not event.key_sequence:
+            state.exit_confirm()
+            return
+
+        pressed_key = _normalize_confirm_key(event.key_sequence[0].key)
+        expected_key = _normalize_confirm_key(confirm_action.key)
+        if pressed_key == expected_key:
+            handler = _confirm_handlers.get(confirm_action)
+            if handler is not None:
+                handler(event)
+
+        state.exit_confirm()
 
     # == Command Mode Key Bindings ==
 
     # TODO: Command Mode Key Bindings
 
 
-    # ========================================
-    # Layout
-    # ========================================
-
-    layout = Layout(
-        HSplit([
-            # ============================================
-            # NOW View (centered main content with padding)
-            # ============================================
-            ConditionalContainer(
-                HSplit([
-                    # Top padding
-                    Window(height=Dimension(weight=NOW_PADDING_TOP_WEIGHT)),
-
-                    # Main content (centered)
-                    VSplit([
-                        Window(width=Dimension(weight=NOW_PADDING_LEFT_RIGHT_WEIGHT)),
-                        Window(
-                            content=FormattedTextControl(renderer.render_now_view_content),
-                            width=Dimension(preferred=NOW_BOX_WIDTH),
-                            wrap_lines=False
-                        ),
-                        Window(width=Dimension(weight=NOW_PADDING_LEFT_RIGHT_WEIGHT)),
-                    ]),
-
-                    # Bottom padding
-                    Window(height=Dimension(weight=NOW_PADDING_BOTTOM_WEIGHT)),
-                ]),
-                filter=is_now_view
-            ),
-
-            # ============================================
-            # STRUCTURE View (full-width main content)
-            # ============================================
-            ConditionalContainer(
-                Window(
-                    content=FormattedTextControl(renderer.render_structure_view_content),
-                    wrap_lines=True
-                ),
-                filter=is_structure_view
-            ),
-
-            # ============================================
-            # INFO View (full-width main content)
-            # ============================================
-            ConditionalContainer(
-                Window(
-                    content=FormattedTextControl(renderer.render_info_view_content),
-                    wrap_lines=True
-                ),
-                filter=is_info_view
-            ),
-
-            # ============================================
-            # ARCHIVE View (full-width main content)
-            # ============================================
-            ConditionalContainer(
-                Window(
-                    content=FormattedTextControl(renderer.render_archive_view_content),
-                    wrap_lines=True
-                ),
-                filter=is_archive_view
-            ),
-
-            # ============================================
-            # Separator (shared, full-width)
-            # ============================================
-            Window(height=1, char="─", style="class:separator"),
-
-            # ============================================
-            # Status Bar (shared, full-width)
-            # ============================================
-            Window(
-                content=FormattedTextControl(renderer.render_status_line),
-                height=1
-            ),
-
-            # ============================================
-            # Input/Command Mode Area (shared)
-            # ============================================
-            ConditionalContainer(
-                HSplit([
-                    VSplit([
-                        Window(content=FormattedTextControl(renderer.render_mode_indicator), width=10),
-                        Window(content=FormattedTextControl(renderer.render_prompt), width=2),
-                        Window(content=BufferControl(buffer=input_buffer)),
-                    ], height=1),
-                ]),
-                filter=is_command_mode | is_input_mode,
-            ),
-        ])
-    )
-
-    style = Style.from_dict({
-        "dim": "ansibrightblack",
-        "track": "bold",
-        "selected": "reverse",
-        "selected_track": "bold ansicyan",
-        "unselected_track": "ansibrightblack",
-        "header": "bold ansiblue",
-        "done": "ansibrightblack",
-        "success": "ansigreen",
-        "error": "ansired",
-        "warning": "ansiyellow",
-        "separator": "ansibrightblack",
-        "mode": "bg:ansiblue ansiwhite",
-        "prompt": "bold",
-        "timer_idle": "bold",
-        "timer_running": "bold ansigreen",
-        "timer_paused": "bold ansiyellow",
-
-        # Track status styles
-        "track.active": "",
-        "track.sleeping": "ansibrightblack",
-
-        # Project status styles
-        "project.focusing": "bold",
-        "project.active": "",
-        "project.sleeping": "ansibrightblack",
-        "project.finished": "ansibrightblack",
-        "project.cancelled": "ansibrightblack strike",
-
-        # Todo status styles
-        "todo.active": "",
-        "todo.sleeping": "ansibrightblack",
-        "todo.done": "ansibrightblack",
-        "todo.cancelled": "ansibrightblack strike",
-
-        # Archive view styles
-        "idea.archived": "ansibrightblack",
-        "todo.archived": "ansibrightblack",
-    })
+    layout = layout_manager.build_layout()
+    style = renderer.build_style()
 
     app = Application(
         layout=layout,

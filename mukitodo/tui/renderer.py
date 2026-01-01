@@ -1,8 +1,11 @@
 import unicodedata
 from datetime import datetime
 
-from mukitodo.tui.states.app_state import AppState, InputPurpose, StructureLevel, UIMode, View
+from prompt_toolkit.styles import Style
+
+from mukitodo.tui.states.app_state import AppState, StructureLevel, UIMode, View
 from mukitodo.tui.states.now_state import TimerStateEnum
+from mukitodo.tui.states.input_state import FormField, FormType, InputPurpose
 
 
 class Renderer:
@@ -18,6 +21,55 @@ class Renderer:
 
 
     # == Public Render Methods =================
+
+    def build_style(self) -> Style:
+        """Build prompt-toolkit Style for the TUI."""
+        return Style.from_dict(
+            {
+                "dim": "ansibrightblack",
+                "track": "bold",
+                "selected": "reverse",
+                "selected_track": "bold ansicyan",
+                "unselected_track": "ansibrightblack",
+                "header": "bold ansiblue",
+                "done": "ansibrightblack",
+                "success": "ansigreen",
+                "error": "ansired",
+                "warning": "ansiyellow",
+                "separator": "ansibrightblack",
+                "mode": "bg:ansiblue ansiwhite",
+                "prompt": "bold",
+                "timer_idle": "bold",
+                "timer_running": "bold ansigreen",
+                "timer_paused": "bold ansiyellow",
+                # Deadline styles
+                "deadline.past": "ansired",
+                # Track status styles
+                "track.active": "",
+                "track.sleeping": "ansibrightblack",
+                # Project status styles
+                "project.focusing": "bold",
+                "project.active": "",
+                "project.sleeping": "ansibrightblack",
+                "project.finished": "ansibrightblack",
+                "project.cancelled": "ansibrightblack strike",
+                # Todo status styles
+                "todo.active": "",
+                "todo.sleeping": "ansibrightblack",
+                "todo.done": "ansibrightblack",
+                "todo.cancelled": "ansibrightblack strike",
+                # Archive view styles
+                "idea.archived": "ansibrightblack",
+                "todo.archived": "ansibrightblack",
+                # Idea status styles (Box view)
+                "idea.active": "",
+                "idea.sleeping": "ansibrightblack",
+                "idea.deprecated": "ansibrightblack strike",
+                "idea.promoted": "ansibrightblack",
+                # Cursor visibility (especially important when selected/reverse styles are used)
+                "cursor": "bg:ansiwhite ansiblack",
+            }
+        )
 
     def render_now_view_content(self) -> list:
         """Render NOW view content."""
@@ -42,16 +94,31 @@ class Renderer:
         """Render ARCHIVE view content."""
         return self._render_archive_view()
 
+    def render_box_view_content(self) -> list:
+        """Render BOX view content."""
+        return self._render_box_view()
+
+    def render_timeline_view_content(self) -> list:
+        """Render TIMELINE view content."""
+        return self._render_timeline_view()
+
     def render_status_line(self) -> list:
         """Render status line based on current mode and state."""
         # Show confirmation prompt if in CONFIRM mode
-        if self.state.ui_mode_state.mode == UIMode.CONFIRM:
-            confirm_action = self.state.ui_mode_state.confirm_action
+        if self.state.ui_mode == UIMode.CONFIRM:
+            confirm_action = self.state.confirm_action
             if confirm_action:
                 # Build message based on action type
-                action_name = confirm_action.name
+                action_name = str(confirm_action.name).replace("_", " ")
                 action_key = confirm_action.key
-                message = f"Press {action_key} again to confirm, any other key to cancel"
+                # Prettify common control-key names for display.
+                display_key = {
+                    "enter": "Enter",
+                    "backspace": "Backspace",
+                    "c-m": "Enter",
+                    "c-h": "Backspace",
+                }.get(action_key, action_key)
+                message = f"{action_name}: press {display_key} again to confirm, any other key to cancel"
             else:
                 message = "Press same key to confirm, any other key to cancel"
             return [
@@ -66,12 +133,12 @@ class Renderer:
             style = "class:success" if last_result.success else "class:error"
             return [(style, f"  {last_result.message}")]
 
-        if self.state.ui_mode_state.mode == UIMode.COMMAND:
+        if self.state.ui_mode == UIMode.COMMAND:
             return [("class:dim", "  [Enter] execute  [Esc/Ctrl+G] exit command mode")]
 
-        if self.state.ui_mode_state.mode == UIMode.INPUT:
-            action = "rename" if self.state.ui_mode_state.input_purpose == InputPurpose.STRUCTURE_RENAME_ITEM else "add"
-            return [("class:dim", f"  [Enter] {action}  [Esc/Ctrl+G] cancel")]
+        if self.state.ui_mode == UIMode.INPUT:
+            # Key hints only (Input Mode UI itself is rendered as two-line form panel).
+            return [("class:dim", "  [Tab] next/prev  [+/-] adjust  [Space] toggle  [Enter] ok  [Esc/Ctrl+G] cancel")]
         
         # Show controls in other situations
 
@@ -91,7 +158,7 @@ class Renderer:
                 parts.append("[r] Reset")
             
             # Todo complete
-            if now_state.current_todo_id:
+            if now_state.current_todo_id is not None:
                 parts.append("[Enter] Mark done")
             
             # Navigation
@@ -102,7 +169,7 @@ class Renderer:
         
 
         if self.state.view == View.INFO:
-            parts = ["[↑↓] select field", "[r] edit", "[i/Esc] back", "[q] quit"]
+            parts = ["[↑↓] select field", "[i/Esc] back", "[q] quit"]
             return [("class:dim", "  " + "  ".join(parts))]
         
         if self.state.view == View.STRUCTURE:
@@ -127,33 +194,232 @@ class Renderer:
             parts = ["[↑↓] move", "[u] unarchive", "[Backspace] delete", "[i] detail", "[Esc/A] exit", "[q] quit"]
             return [("class:dim", "  " + "  ".join(parts))]
 
+        if self.state.view == View.BOX:
+            parts = [
+                "[↑↓] move",
+                "[[]/[]] switch",
+                "[=/+] add",
+                "[r] edit",
+                "[a] archive",
+                "[Backspace] delete",
+                "[m] move",
+                "[p] promote",
+                "[i] detail",
+                "[b] back",
+                "[q] quit",
+            ]
+            return [("class:dim", "  " + "  ".join(parts))]
+
+        if self.state.view == View.TIMELINE:
+            parts = ["[↑↓] move", "[i] detail", "[=/+] new takeaway", "[r] edit", "[Backspace] delete", "[t/Esc] exit", "[q] quit"]
+            return [("class:dim", "  " + "  ".join(parts))]
+
         # Default fallback
         return [("class:dim", "  [q] Quit")]
 
     def render_mode_indicator(self) -> list:
         """Render mode indicator based on current mode."""
-        if self.state.ui_mode_state.mode == UIMode.COMMAND:
+        if self.state.ui_mode == UIMode.COMMAND:
             return [("class:mode", " COMMAND ")]
-        if self.state.ui_mode_state.mode == UIMode.INPUT:
-            if self.state.ui_mode_state.input_purpose == InputPurpose.STRUCTURE_RENAME_ITEM:
-                return [("class:mode", " RENAME ")]
-            elif self.state.ui_mode_state.input_purpose == InputPurpose.INFO_EDIT_FIELD:
-                return [("class:mode", " EDIT FIELD ")]
-
-            # Add mode
-            if self.state.view == View.NOW:
-                return [("class:mode", " NEW ITEM ")]
-            elif self.state.structure_state.structure_level == StructureLevel.TRACKS:
-                return [("class:mode", " NEW TRACK ")]
-            elif self.state.structure_state.structure_level in [StructureLevel.TRACKS_WITH_PROJECTS_T, StructureLevel.TRACKS_WITH_PROJECTS_P]:
-                return [("class:mode", " NEW PROJECT ")]
-            else:
-                return [("class:mode", " NEW TODO ")]
+        if self.state.ui_mode == UIMode.INPUT:
+            input_state = self.state.input_state
+            purpose = input_state.input_purpose
+            form_type = input_state.form_type
+            label = " INPUT "
+            if purpose and form_type:
+                prefix = "NEW" if purpose == InputPurpose.ADD else "EDIT"
+                label = f" {prefix} {form_type.value.upper()} "
+            return [("class:mode", label)]
         return [("class:mode", " NORMAL ")]
 
     def render_prompt(self) -> list:
         """Render command/input prompt."""
         return [("class:prompt", "> ")]
+
+    # == Input Mode Rendering ==================================================
+
+    def render_input_purpose_prompt(self) -> list[tuple[str, str]]:
+        """Render the [New X] / [Edit X] prompt shown in Input Mode line 1."""
+        input_state = self.state.input_state
+        if not input_state.is_active:
+            return [("class:dim", "")]
+
+        purpose = input_state.input_purpose
+        form_type = input_state.form_type
+        if purpose is None or form_type is None:
+            return [("class:dim", "")]
+
+        verb = "New" if purpose == InputPurpose.ADD else "Edit"
+        label = form_type.value.replace("_", " ").title()
+        # Render as a solid mode block (no brackets).
+        return [("class:mode", f" {verb} {label} ")]
+
+    def render_input_field_label(self, label: str) -> list[tuple[str, str]]:
+        return [("class:dim", label)]
+
+    def render_input_text_value(self, field: FormField) -> list[tuple[str, str]]:
+        """Non-active display for a text field (active state uses BufferControl)."""
+        input_state = self.state.input_state
+        value = input_state.get_field_str(field)
+        style = "class:selected" if input_state.current_field == field else ""
+        return [(style, value)]
+
+    def render_input_chip(self, field: FormField, label: str) -> list[tuple[str, str]]:
+        """Compact '[Label:value]' chip, highlighted when selected."""
+        input_state = self.state.input_state
+        value = input_state.get_field_display(field)
+        style = "class:selected" if input_state.current_field == field else "class:dim"
+        return [(style, f"[{label}:{value}]")]
+
+    # == Structure Line Formatting ======================================
+
+    _STATUS_ICON_MAP = {
+        "focusing": "📌",
+        "active": "○",
+        "sleeping": "z",
+        "finished": "◉",
+        "done": "◉",
+        "cancelled": "×",
+        "deprecated": "×",
+        "promoted": "◉",
+    }
+
+    def _get_terminal_width(self, fallback: int = 80) -> int:
+        """Best-effort terminal width for alignment. Safe to call without an active app."""
+        try:
+            from prompt_toolkit.application.current import get_app
+            cols = get_app().output.get_size().columns
+            return int(cols) if cols and cols > 0 else fallback
+        except Exception:
+            return fallback
+
+    def _truncate_to_display_width(self, text: str, max_width: int) -> str:
+        """Truncate text to fit max display width, appending '…' when truncated."""
+        if max_width <= 0:
+            return ""
+        if self._display_width(text) <= max_width:
+            return text
+
+        ellipsis = "…"
+        target = max(0, max_width - self._display_width(ellipsis))
+        out = []
+        used = 0
+        for ch in text:
+            w = self._display_width(ch)
+            if used + w > target:
+                break
+            out.append(ch)
+            used += w
+        return "".join(out) + ellipsis
+
+    def _deadline_parts(self, item: dict) -> tuple[str | None, bool]:
+        """Return (YYYY-MM-DD, is_past) for deadline_local if present."""
+        deadline = item.get("deadline_local")
+        if not isinstance(deadline, datetime):
+            return (None, False)
+
+        today = datetime.now().astimezone().date()
+        ddl_date = deadline.astimezone().date()
+        ddl_str = ddl_date.strftime("%Y-%m-%d")
+        return (ddl_str, ddl_date < today)
+
+    def _project_hint_icons(self, project: dict) -> list[str]:
+        """Project-only hint icons. Display when value is 2-3 (we treat >=2 as visible)."""
+        icons: list[str] = []
+        if (project.get("willingness_hint") or 0) >= 2:
+            icons.append("♥")
+        if (project.get("importance_hint") or 0) >= 2:
+            icons.append("⭑")
+        if (project.get("urgency_hint") or 0) >= 2:
+            icons.append("⚡")
+        return icons
+
+    def _structure_flags(self, item_type: str, item: dict) -> list[str]:
+        flags: list[str] = []
+        if item.get("description"):
+            flags.append("[≡]")
+        if item_type == "todo" and item.get("url"):
+            flags.append("[↗]")
+
+        tui = item.get("_tui") or {}
+        session_count = int(tui.get("session_count") or 0)
+        takeaway_count = int(tui.get("takeaway_count") or 0)
+        if item_type in ("project", "todo"):
+            if session_count > 0:
+                flags.append(f"[⧗{session_count}]")
+            if takeaway_count > 0:
+                flags.append(f"[✎{takeaway_count}]")
+        return flags
+
+    def _structure_line_segments(
+        self,
+        *,
+        item_type: str,
+        index_1based: int,
+        item: dict,
+        is_selected: bool,
+        width: int,
+    ) -> list[tuple[str, str]]:
+        """
+        Build a single structure line with right-aligned hints/deadline.
+        Returns formatted-text segments (including trailing newline).
+        """
+        base_style = self._get_item_style(item, item_type, is_selected)
+
+        status = item.get("status", "active")
+        icon = self._STATUS_ICON_MAP.get(status, "○")
+
+        left = f"{icon} {item_type.capitalize()} {index_1based}: {item.get('name','')}"
+        flags = self._structure_flags(item_type, item)
+        if flags:
+            left = left + " " + " ".join(flags)
+
+        # Right side: (Project hints) + (deadline)
+        right_parts: list[str] = []
+        if item_type == "project":
+            right_parts.extend(self._project_hint_icons(item))
+
+        ddl_str, ddl_is_past = self._deadline_parts(item)
+        if ddl_str:
+            right_parts.append(ddl_str)
+
+        # If space is tight, prefer keeping the deadline (last) and dropping hint icons first.
+        right_text = " ".join(right_parts)
+        left_width = self._display_width(left)
+        right_width = self._display_width(right_text)
+
+        if right_text and (left_width + 2 + right_width) > width and len(right_parts) > 1:
+            # Keep only the last part (deadline) if present.
+            right_parts = right_parts[-1:]
+            right_text = " ".join(right_parts)
+            right_width = self._display_width(right_text)
+
+        # If left alone is too long, truncate left to fit.
+        if left_width > width:
+            left = self._truncate_to_display_width(left, width)
+            left_width = self._display_width(left)
+
+        if right_text and (left_width + 2 + right_width) <= width:
+            pad_spaces = width - left_width - right_width
+            pad = " " * pad_spaces
+            segments: list[tuple[str, str]] = [(base_style, left), (base_style, pad)]
+
+            if ddl_str and right_text.endswith(ddl_str) and ddl_is_past:
+                hints_text = right_text[: -len(ddl_str)].rstrip()
+                if hints_text:
+                    segments.append((base_style, hints_text + " "))
+                segments.append(("class:deadline.past", ddl_str))
+            else:
+                segments.append((base_style, right_text))
+
+            segments.append((base_style, "\n"))
+            return segments
+
+        # Fallback: if it doesn't fit, drop right_text.
+        text = left
+        if self._display_width(text) > width:
+            text = self._truncate_to_display_width(text, width)
+        return [(base_style, text + "\n")]
 
 
 
@@ -249,7 +515,7 @@ class Renderer:
         # Get project name from current_projects_list
         project_name = "Unknown"
         project_id = self.state.structure_state.current_project_id
-        if project_id:
+        if project_id is not None:
             # Find project in current_projects_list (already loaded in structure_state)
             projects = self.state.structure_state.current_projects_list
             for proj in projects:
@@ -259,7 +525,7 @@ class Renderer:
 
         lines.append(("class:header", f"  Project: {project_name}\n\n"))
 
-        if not project_id:
+        if project_id is None:
             lines.append(("class:dim", "  No project selected\n"))
             return lines
 
@@ -268,15 +534,17 @@ class Renderer:
         else:
             for idx, todo in enumerate(todos):
                 is_selected = idx == self.state.structure_state.selected_todo_idx
-                prefix = "▸ " if is_selected else "  "
-
-                # Apply status style
-                style = self._get_item_style(todo, "todo", is_selected)
-
-                # Keep existing marker logic
-                marker = "✓" if todo["status"] == "done" else "○"
-
-                lines.append((style, f"{prefix}Item {idx + 1}: {marker} {todo['name']}\n"))
+                indent = "  "
+                width = max(40, self._get_terminal_width() - 2)
+                segs = self._structure_line_segments(
+                    item_type="todo",
+                    index_1based=idx + 1,
+                    item=todo,
+                    is_selected=is_selected,
+                    width=max(20, width - self._display_width(indent)),
+                )
+                lines.append(("", indent))
+                lines.extend(segs)
 
         return lines
     
@@ -363,14 +631,185 @@ class Renderer:
             lines.append(("", "\n"))
 
         # Render Ideas section
-        if archive_data["ideas"]:
+        if archive_data.get("ideas"):
             lines.append(("class:header", "  Archived Ideas\n\n"))
-            for idea in archive_data["ideas"]:
+            for idea in archive_data.get("ideas", []):
                 is_selected = flat_idx == selected_idx
                 prefix = "▸ " if is_selected else "  "
                 style = "class:selected" if is_selected else "class:idea.archived"
                 lines.append((style, f"{prefix}Idea: {idea['name']} (archived)\n"))
                 flat_idx += 1
+
+            lines.append(("", "\n"))
+
+        # Render Box Todos section (archived todos with project_id is NULL)
+        if archive_data.get("box_todos"):
+            lines.append(("class:header", "  Archived Box Todos\n\n"))
+            for todo in archive_data.get("box_todos", []):
+                is_selected = flat_idx == selected_idx
+                prefix = "▸ " if is_selected else "  "
+                if is_selected:
+                    style = "class:selected"
+                else:
+                    todo_status = todo.get("status", "active")
+                    style = f"class:todo.{todo_status}"
+                marker = "✓" if todo.get("status") == "done" else "○"
+                lines.append((style, f"{prefix}{marker} Todo: {todo.get('name','')}\n"))
+                flat_idx += 1
+
+        return lines
+
+    def _render_box_view(self) -> list:
+        """Render BOX view content (Todos/Ideas subviews)."""
+        lines: list[tuple[str, str]] = []
+
+        box_state = self.state.box_state
+        subview = box_state.subview
+
+        lines.append(("class:header", "  BOX\n\n"))
+
+        hint = f"  Subview: {subview.value.upper()}   ([ / ] switch)\n\n"
+        lines.append(("class:dim", hint))
+
+        width = max(40, self._get_terminal_width() - 2)
+
+        if subview.value == "todos":
+            items = box_state.current_box_todos_list
+            selected_idx = box_state.selected_todo_idx
+            item_type = "todo"
+        else:
+            items = box_state.current_box_ideas_list
+            selected_idx = box_state.selected_idea_idx
+            item_type = "idea"
+
+        if not items:
+            empty_label = "No box todos. Press = to add\n" if item_type == "todo" else "No ideas. Press = to add\n"
+            lines.append(("class:dim", f"  {empty_label}"))
+            return lines
+
+        for idx, item in enumerate(items):
+            is_selected = (selected_idx == idx)
+            segs = self._structure_line_segments(
+                item_type=item_type,
+                index_1based=idx + 1,
+                item=item,
+                is_selected=is_selected,
+                width=width,
+            )
+            lines.append(("", "  "))
+            lines.extend(segs)
+
+        return lines
+
+    def _render_timeline_view(self) -> list:
+        """Render TIMELINE view content with tree-style layout."""
+        lines = []
+        timeline_state = self.state.timeline_state
+        flat_rows = timeline_state.flat_rows
+        selected_idx = timeline_state.selected_row_idx
+
+        if not flat_rows:
+            lines.append(("class:dim", "  No timeline records\n"))
+            return lines
+
+        lines.append(("class:header", "  Timeline\n\n"))
+
+        for row_idx, row in enumerate(flat_rows):
+            row_type = row[0]
+            is_selected = row_idx == selected_idx
+
+            if row_type == "date_header":
+                # Date header row (not selectable)
+                date_str = row[1]
+                lines.append(("class:dim", f"  -- {date_str} --\n\n"))
+
+            elif row_type == "session":
+                # Session row: (row_type, session_dict, session_num, takeaway_count)
+                session_dict = row[1]
+                session_num = row[2]
+                lines.extend(self._render_session_row(session_dict, session_num, is_selected))
+
+            elif row_type == "takeaway":
+                # Takeaway row: (row_type, takeaway_dict, takeaway_num, is_last, parent_session_dict)
+                takeaway_dict = row[1]
+                takeaway_num = row[2]
+                is_last = row[3]
+                lines.extend(self._render_takeaway_row(takeaway_dict, takeaway_num, is_last, is_selected, is_standalone=False))
+
+            elif row_type == "standalone_takeaway":
+                # Standalone takeaway: (row_type, takeaway_dict)
+                takeaway_dict = row[1]
+                lines.extend(self._render_takeaway_row(takeaway_dict, 0, True, is_selected, is_standalone=True))
+
+        return lines
+
+    def _render_session_row(self, session_dict: dict, session_num: int, is_selected: bool) -> list:
+        """Render a Session row."""
+        lines = []
+
+        # Get time info
+        ended_at = session_dict.get("ended_at_utc")
+        started_at = session_dict.get("started_at_utc")
+
+        # Format time
+        if ended_at:
+            time_str = ended_at.strftime("%H:%M")
+        else:
+            time_str = "??:??"
+
+        # Calculate duration
+        if started_at and ended_at:
+            duration_seconds = (ended_at - started_at).total_seconds()
+            duration_min = int(duration_seconds // 60)
+            duration_str = f"{duration_min}m"
+        else:
+            duration_str = "?m"
+
+        # Get parent info
+        parent_info = session_dict.get("parent_info", "")
+
+        # Build display text
+        prefix = "▸ " if is_selected else "  "
+        display_text = f"{prefix}{time_str} {duration_str} Session {session_num}: {parent_info}\n"
+
+        style = "class:selected" if is_selected else ""
+        lines.append((style, display_text))
+
+        return lines
+
+    def _render_takeaway_row(self, takeaway_dict: dict, takeaway_num: int, is_last: bool, is_selected: bool, is_standalone: bool) -> list:
+        """Render a Takeaway row with tree structure."""
+        lines = []
+
+        # Get time info
+        created_at = takeaway_dict.get("created_at_utc")
+        if created_at:
+            time_str = created_at.strftime("%H:%M")
+        else:
+            time_str = "??:??"
+
+        # Get takeaway type and title
+        takeaway_type = takeaway_dict.get("type", "action")
+        title = takeaway_dict.get("title", "")
+        content = takeaway_dict.get("content", "")
+
+        # Use title if available, otherwise truncate content
+        display_text = title if title else (content[:30] + "..." if len(content) > 30 else content)
+
+        if is_standalone:
+            # Standalone takeaway (no parent session)
+            parent_info = takeaway_dict.get("parent_info", "")
+            prefix = "▸ " if is_selected else "  "
+            line = f"{prefix}{time_str} Takeaway: [{takeaway_type}] {parent_info} · {display_text}\n"
+        else:
+            # Linked takeaway (under a session)
+            tree_symbol = "└──" if is_last else "├──"
+            prefix = "▸ " if is_selected else "  "
+            # Indent for tree structure
+            line = f"{prefix}  {tree_symbol} {time_str} Takeaway {takeaway_num}: [{takeaway_type}] · {display_text}\n"
+
+        style = "class:selected" if is_selected else ""
+        lines.append((style, line))
 
         return lines
 
@@ -481,18 +920,27 @@ class Renderer:
                     and proj_idx == self.state.structure_state.selected_project_idx
                 )
 
-                # Apply Project status style
-                proj_style = self._get_item_style(project, "project", is_project_selected)
+                # Render project row using README display format, right-aligned within box.
+                content_width = self.box_width - 2
+                segs = self._structure_line_segments(
+                    item_type="project",
+                    index_1based=proj_idx + 1,
+                    item=project,
+                    is_selected=is_project_selected,
+                    width=content_width,
+                )
 
-                proj_prefix = "▸ " if is_project_selected else "  "
+                row_text = "".join(t for _, t in segs).rstrip("\n")
+                row_text_width = self._display_width(row_text)
+                pad = " " * max(0, content_width - row_text_width)
 
-                # Add ✓ suffix for finished projects
-                status_suffix = " ✓" if project["status"] == "finished" else ""
-
-                proj_text = f"{proj_prefix}Project {proj_idx + 1}: {project['name']}{status_suffix}"
-                proj_text_width = self._display_width(proj_text)  # Fix for Chinese characters
-                padding = max(0, self.box_width - 2 - proj_text_width)
-                lines.append((proj_style, f"│{proj_text}" + " " * padding + "│\n"))
+                lines.append(("", "│"))
+                for style, text in segs:
+                    lines.append((style, text.rstrip("\n")))
+                if pad:
+                    base_style = self._get_item_style(project, "project", is_project_selected)
+                    lines.append((base_style, pad))
+                lines.append(("", "│\n"))
 
         bottom_line = "└" + "─" * (self.box_width - 2) + "┘\n"
         lines.append((track_style, bottom_line))

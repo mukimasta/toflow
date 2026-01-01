@@ -27,6 +27,9 @@ class ArchiveState:
         # Cursor position
         self._selected_idx: int | None = None
 
+        # Used by AppState to decide where to go after unarchive.
+        self._last_unarchived_was_box_todo: bool = False
+
         # Load initial data
         self.load_archive_data()
 
@@ -37,7 +40,7 @@ class ArchiveState:
         result = actions.list_archived_structure()
 
         if not result.success or not result.data:
-            self._archive_data = {"tracks": [], "ideas": []}
+            self._archive_data = {"tracks": [], "ideas": [], "box_todos": []}
             self._flat_items = []
             self._selected_idx = None
             return
@@ -88,7 +91,7 @@ class ArchiveState:
                     ))
 
         # Add ideas
-        for idea in self._archive_data["ideas"]:
+        for idea in self._archive_data.get("ideas", []):
             idea_id = idea["id"]
             flat_list.append((
                 "idea",
@@ -97,6 +100,18 @@ class ArchiveState:
                 None,
                 None,
                 idea
+            ))
+
+        # Add archived box todos (project_id is NULL)
+        for todo in self._archive_data.get("box_todos", []):
+            todo_id = todo["id"]
+            flat_list.append((
+                "todo",
+                todo_id,
+                None,
+                None,
+                todo_id,
+                todo
             ))
 
         self._flat_items = flat_list
@@ -132,6 +147,7 @@ class ArchiveState:
             self._message.set(Result(False, None, "No item selected"))
             return
 
+        self._last_unarchived_was_box_todo = False
         item_type, item_id, _, _, _, item_dict = self._flat_items[self._selected_idx]
 
         # Check if item is actually archived
@@ -145,6 +161,8 @@ class ArchiveState:
         elif item_type == "project":
             result = actions.unarchive_project(item_id)
         elif item_type == "todo":
+            # A todo is a box todo if it has no project_id.
+            self._last_unarchived_was_box_todo = item_dict.get("project_id") is None
             result = actions.unarchive_todo(item_id)
         elif item_type == "idea":
             result = actions.unarchive_idea_item(item_id)
@@ -210,3 +228,7 @@ class ArchiveState:
     def selected_idx(self) -> int | None:
         """Get current cursor position."""
         return self._selected_idx
+
+    @property
+    def last_unarchived_was_box_todo(self) -> bool:
+        return self._last_unarchived_was_box_todo

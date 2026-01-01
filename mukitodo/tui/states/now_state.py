@@ -43,6 +43,7 @@ class NowState:
 
         # == Session Tracking ==
         self._session_started_at: datetime | None = None  # For database persistence
+        self._last_saved_session_id: int | None = None  # For linking takeaways
 
 
     # ========== Item Context Management ==========
@@ -122,6 +123,7 @@ class NowState:
         self._timer_start_timestamp = None
         self._paused_remaining = None
         self._session_started_at = None  # Clear session
+        self._last_saved_session_id = None  # Clear saved session id
 
         # Keep item context and cached data (don't clear _current_*_dict)
         # User may want to restart timer for the same item
@@ -167,6 +169,67 @@ class NowState:
         """Check if there's an active session to save."""
         return self._session_started_at is not None
 
+    def save_session(self) -> Result:
+        """Save current session to database. Returns Result with session_id in data."""
+        if not self._session_started_at:
+            return Result(False, None, "No active session to save")
+
+        if self._current_project_id is None and self._current_todo_id is None:
+            return Result(False, None, "No project or todo selected")
+
+        ended_at = datetime.now(timezone.utc)
+        duration = self.get_session_duration_minutes()
+
+        # Prefer todo_item_id over project_id
+        if self._current_todo_id is not None:
+            result = actions.save_session(
+                project_id=None,
+                todo_item_id=self._current_todo_id,
+                duration_minutes=duration,
+                started_at_utc=self._session_started_at,
+                ended_at_utc=ended_at
+            )
+        else:
+            result = actions.save_session(
+                project_id=self._current_project_id,
+                todo_item_id=None,
+                duration_minutes=duration,
+                started_at_utc=self._session_started_at,
+                ended_at_utc=ended_at
+            )
+
+        if result.success:
+            self._last_saved_session_id = result.data
+            if self._timer_state == TimerStateEnum.RUNNING and self._timer_start_timestamp:
+                self.update_timer()
+
+            self._timer_state = TimerStateEnum.IDLE
+            self._timer_start_timestamp = None
+            self._paused_remaining = None
+            self._session_started_at = None
+
+        return result
+
+    def create_takeaway_for_session(self, content: str) -> Result:
+        """Create a takeaway linked to the last saved session."""
+        from datetime import date as date_type
+
+        if self._last_saved_session_id is None:
+            return Result(False, None, "No session to link takeaway to")
+
+        # Use todo_item_id or project_id as parent
+        result = actions.create_takeaway(
+            title=None,
+            content=content,
+            type="action",
+            date=date_type.today(),
+            project_id=self._current_project_id if self._current_todo_id is None else None,
+            todo_item_id=self._current_todo_id,
+            now_session_id=self._last_saved_session_id
+        )
+
+        return result
+
 
     # ========== Property Getters ==========
 
@@ -193,6 +256,11 @@ class NowState:
     @property
     def timer_state(self) -> TimerStateEnum:
         return self._timer_state
+
+    @property
+    def last_saved_session_id(self) -> int | None:
+        """Last persisted session id (used for linking takeaways)."""
+        return self._last_saved_session_id
 
     @property
     def target_minutes(self) -> int:

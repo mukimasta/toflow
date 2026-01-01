@@ -139,26 +139,86 @@ cli.py
     - Todo: Active > Sleeping > Done > Cancelled
 3. 实现 Archive 面板（View）✅
 
-### v0.0.4 (b) 实现 Timeline View
+### v0.0.4 (b) 2025-12-30 实现 Timeline View
+
+1. 新增 Timeline View，用于查看所有 NOW Session 的时间线记录✅
+    - 显示所有历史 Session 记录，按时间倒序排列
+    - 显示 Session 的基本信息：项目名称、开始时间、持续时间、收获（Takeaways）等
+    - 支持按项目、日期等维度筛选和排序
+2. 重构 INFO View 并优化其显示逻辑
+    - 完善 Session， Takeaway 详细信息的展示，包括状态、描述、关键日期等
+    - 改进输入框布局以支持多行编辑
 
 
 
-### v0.0.4 (c)
+### v0.0.4 (c) 2025-12-30 重大更新: 重构 Input Mode
+
+1. 重构 Input Mode 为「两行表单 + 真·就地编辑」✅
+    - 新增 InputState 类管理 Input Mode 状态
+    - 新增两行 Input 面板（分割线与状态栏保持不变），光标直接在字段处编辑
+    - `Tab/Shift+Tab` 切字段，`Space/+/-/↑↓` 调整枚举/数值字段，`Enter` 提交，`Esc/Ctrl+G` 取消
+2. Input Mode 支持多类型、多字段编辑（v1：单行、溢出不处理）✅
+    - Track: Name, Description, Status
+    - Project: Name, Description, Deadline, Status, Willingness/Importance/Urgency
+    - Todo: Name, Description, Deadline, Status
+    - Idea: Name, Description, Status, Maturity/Willingness
+    - Takeaway: Title, Content, Type, Date
+
+v0.0.4 (d) 2026-12-31 重构 TUI，新增 TUI Layout Manager
+
+TUI Data Flow: (New)
+
+```mermaid
+flowchart TD
+  appPy[app.py] -->|key_binding_updates_state| appState[AppState]
+  appPy -->|build_layout| layoutMgr[LayoutManager]
+  layoutMgr -->|uses_renderer_callbacks| renderer[Renderer]
+  renderer -->|reads_cached_state| appState
+  appPy -->|style_from_renderer| renderer
+  appState -->|calls| actions[actions.py]
+```
+
+### v0.0.4 (e) 2026-12-31 Box 收集箱 ✅
+
+1. 新增 BOX 视图（`b` 进入/退出），包含 Box Todos / Box Ideas 两个子视图（`[` / `]` 切换）✅
+2. BOX 内支持新增/编辑/归档/删除/详情查看 ✅
+3. 实现 Box Todo move（到 Structure 选择目标后 `Enter` 确认）✅
+4. 实现 Box Idea promote（到 Structure 选择目标后 `Enter` 确认；已 promoted 的 idea 禁止再次 promote）✅
+5. Archive 补齐 Archived Box Todos，并支持解档后跳回 BOX ✅
 
 
-3. 完善 Item 的更多信息的样式显示
-5. 实现 Takeaways 的记录功能 
-6. 实现 Takeaways 面板（View）
-7. 实现 NOW Done List 功能
-8. 更改 Input Mode 显示及功能，Rename/Add Item 模式下，新增更多字段的编辑功能
-    - Prompt 部分改为两行，第一行显示 Input Purpose Prompt，第二行显示类型切换按钮，例如 Takeaway.type (action/insight)
-    - 输入框改为两行，第一行输入 Title/Name，第二行输入 Description/Content
-    - Track Item 可编辑 Name, Description
-    - Project Item 可编辑 Name, Description; Deadline, Willingness, Importance, Urgency, Started At
-    - Todo Item 可编辑 Name, Description; URL, Deadline
-    - Idea Item 可编辑 Name, Description; Maturity, Willingness, Status
-    - Session Item 可编辑 Description; Started At, Duration, Ended At
-    - Takeaway Item 可编辑 Title, Content, Type, Date
+当前目录结构：
+```
+├── mukitodo/
+│   ├── __init__.py         # Package init
+│   ├── cli.py              # CLI entry point ("todo" command)
+│   ├── actions.py          # Business logic
+│   ├── database.py         # Database connection & setup
+│   ├── models.py           # SQLAlchemy ORM models
+│   └── tui/                # prompt-toolkit Terminal UI Application
+│       ├── __init__.py     # TUI package core
+│       ├── app.py          # Key bindings, layout, TUI app launcher
+│       ├── layout_manager.py    # Dynamic layout computation
+│       ├── renderer.py     # Pure rendering routines
+│       ├── states/         # State management modules
+│       │   ├── app_state.py        # Top-level state coordinator
+│       │   ├── input_state.py      # Input MODE state
+│       │   ├── now_state.py        # NOW VIEW state
+│       │   ├── structure_state.py  # STRUCTURE VIEW state
+│       │   ├── info_state.py       # INFO VIEW state
+│       │   ├── timeline_state.py   # TIMELINE VIEW state
+│       │   ├── archive_state.py    # ARCHIVE VIEW state
+│       │   ├── box_state.py        # BOX VIEW state
+│       │   └── message_holder.py   # Message/Result manager
+```
 
+至此，所有主要功能均已实现，包括：
+1. NOW 行动器
+2. STRUCTURE 结构
+3. BOX 收集箱
+4. ARCHIVE 归档视图
+5. TIMELINE 时间线视图
+6. INFO 信息视图
+以及各模式间的交互
 
-v0.0.5 计划：实现 Box 收集箱
+未来将进行适度的重构优化，以及大规模的体验优化

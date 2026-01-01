@@ -17,11 +17,14 @@ class InfoState:
         self._selected_field_idx: int = 0 # / cursor
         
         # Context saved when entering INFO view
-        self._item_type: str | None = None  # "track", "project", "todo"
+        self._item_type: str | None = None  # "track", "project", "todo", "idea", "session", "takeaway"
 
         self._current_track_id: int | None = None
         self._current_project_id: int | None = None
         self._current_todo_id: int | None = None
+        self._current_session_id: int | None = None
+        self._current_takeaway_id: int | None = None
+        self._current_idea_id: int | None = None
 
         # For Renderer
         self._current_track_name: str | None = None
@@ -37,6 +40,53 @@ class InfoState:
         self._current_track_id = track_id
         self._current_project_id = project_id
         self._current_todo_id = todo_id
+        self._current_session_id = None
+        self._current_takeaway_id = None
+        self._current_idea_id = None
+
+        self._load_field_dict()
+        self._load_structure_names()
+
+    def reload_info_panel_for_box(self, item_type: str, item_id: int) -> None:
+        """Enter INFO view for box todo or idea."""
+        self._selected_field_idx = 0
+        self._item_type = item_type  # "todo" or "idea"
+
+        # Clear structure context by default; todo/idea is self-contained.
+        self._current_track_id = None
+        self._current_project_id = None
+        self._current_todo_id = None
+        self._current_session_id = None
+        self._current_takeaway_id = None
+        self._current_idea_id = None
+
+        if item_type == "todo":
+            self._current_todo_id = item_id
+        elif item_type == "idea":
+            self._current_idea_id = item_id
+        else:
+            raise ValueError(f"Invalid box item type: {item_type}")
+
+        self._load_field_dict()
+        self._load_structure_names()
+
+    def reload_info_panel_for_timeline(self, item_type: str, item_id: int) -> None:
+        """Enter INFO view for session or takeaway from Timeline view."""
+        self._selected_field_idx = 0
+        self._item_type = item_type  # "session" or "takeaway"
+        self._current_track_id = None
+        self._current_project_id = None
+        self._current_todo_id = None
+        self._current_idea_id = None
+
+        if item_type == "session":
+            self._current_session_id = item_id
+            self._current_takeaway_id = None
+        elif item_type == "takeaway":
+            self._current_session_id = None
+            self._current_takeaway_id = item_id
+        else:
+            raise ValueError(f"Invalid item type for timeline: {item_type}")
 
         self._load_field_dict()
         self._load_structure_names()
@@ -48,6 +98,9 @@ class InfoState:
         self._current_track_id = None
         self._current_project_id = None
         self._current_todo_id = None
+        self._current_session_id = None
+        self._current_takeaway_id = None
+        self._current_idea_id = None
         self._current_track_name = None
         self._current_project_name = None
         self._current_todo_name = None
@@ -60,40 +113,6 @@ class InfoState:
         self._selected_field_idx = max(0, min(field_len - 1, self._selected_field_idx + delta))
         self._message.set(EmptyResult)
 
-    def update_selected_field(self, new_value: Any) -> None:
-        """Update selected field with current field dictionary."""
-        assert self._field_dict is not None
-        field_names = list(self._field_dict.keys())
-        selected_field_name = field_names[self._selected_field_idx]
-        original_value = self._field_dict[selected_field_name]
-        if original_value == new_value:
-            self._message.set(Result(True, None, "New value is the same as original value"))
-            return
-
-        if self._item_type == "track":
-            assert self._current_track_id is not None
-            result = actions.set_item_property(self._current_track_id, "track", selected_field_name, new_value)
-        elif self._item_type == "project":
-            assert self._current_project_id is not None
-            result = actions.set_item_property(self._current_project_id, "project", selected_field_name, new_value)
-        elif self._item_type == "todo":
-            assert self._current_todo_id is not None
-            result = actions.set_item_property(self._current_todo_id, "todo", selected_field_name, new_value)
-        else:
-            raise ValueError(f"Invalid item type: {self._item_type}")
-        
-        if not result.success:
-            raise ValueError(f"[Action Error] Failed to set item property: {result.message}")
-        self._field_dict[selected_field_name] = result.data
-        self._message.set(result)
-
-    def get_current_field_value(self) -> str:
-        """Get the value of the current field."""
-        assert self._field_dict is not None
-        field_names = list[str](self._field_dict.keys())
-        selected_field_name = field_names[self._selected_field_idx]
-        return self._field_dict[selected_field_name]
-
     def _load_field_dict(self) -> None:
         """Load field dictionary for current item type."""
         if self._item_type == "track":
@@ -105,6 +124,15 @@ class InfoState:
         elif self._item_type == "todo":
             assert self._current_todo_id is not None
             result = actions.get_todo_dict(self._current_todo_id)
+        elif self._item_type == "idea":
+            assert self._current_idea_id is not None
+            result = actions.get_idea_item_dict(self._current_idea_id)
+        elif self._item_type == "session":
+            assert self._current_session_id is not None
+            result = actions.get_session(self._current_session_id)
+        elif self._item_type == "takeaway":
+            assert self._current_takeaway_id is not None
+            result = actions.get_takeaway_dict(self._current_takeaway_id)
         else:
             raise ValueError(f"Invalid item type: {self._item_type}")
 
@@ -114,17 +142,17 @@ class InfoState:
 
     def _load_structure_names(self) -> None:
         """Load structure names for breadcrumb display."""
-        if self._current_track_id:
+        if self._current_track_id is not None:
             result = actions.get_track_dict(self._current_track_id)
             if not result.success:
                 raise ValueError(f"[Action Error] Failed to get track name: {result.message}")
             self._current_track_name = result.data["name"]
-        if self._current_project_id:
+        if self._current_project_id is not None:
             result = actions.get_project_dict(self._current_project_id)
             if not result.success:
                 raise ValueError(f"[Action Error] Failed to get project name: {result.message}")
             self._current_project_name = result.data["name"]
-        if self._current_todo_id:
+        if self._current_todo_id is not None:
             result = actions.get_todo_dict(self._current_todo_id)
             if not result.success:
                 raise ValueError(f"[Action Error] Failed to get todo name: {result.message}")
@@ -152,7 +180,15 @@ class InfoState:
     @property
     def current_todo_id(self) -> int | None:
         return self._current_todo_id
-    
+
+    @property
+    def current_session_id(self) -> int | None:
+        return self._current_session_id
+
+    @property
+    def current_takeaway_id(self) -> int | None:
+        return self._current_takeaway_id
+
     @property
     def current_track_name(self) -> str | None:
         return self._current_track_name
