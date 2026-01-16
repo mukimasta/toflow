@@ -77,6 +77,20 @@ def run():
     is_input_text_field = Condition(lambda: state.ui_mode == UIMode.INPUT and state.input_state.is_text_input_field())
     is_input_non_text_field = Condition(lambda: state.ui_mode == UIMode.INPUT and (not state.input_state.is_text_input_field()))
 
+    def _safe_add(*primary_keys: str, fallback_keys: tuple[str, ...] | None = None, filter=None):
+        """
+        Register key bindings with a fallback for older prompt-toolkit key names.
+
+        Many terminals send Alt+Arrow as an ESC-prefixed sequence, so we fallback
+        to ("escape","up/down") when "m-up"/"m-down" isn't supported.
+        """
+        try:
+            return kb.add(*primary_keys, filter=filter)
+        except ValueError:
+            if not fallback_keys:
+                raise
+            return kb.add(*fallback_keys, filter=filter)
+
 
     # == General Key Bindings ==
 
@@ -142,6 +156,14 @@ def run():
     @kb.add("down", filter=is_normal_mode & is_structure_view)
     def _(event):
         state.structure_state.move_cursor(1)
+
+    @_safe_add("m-up", fallback_keys=("escape", "up"), filter=is_normal_mode & is_structure_view)
+    def _(event):
+        state.structure_state.move_selected_item_order(-1)
+
+    @_safe_add("m-down", fallback_keys=("escape", "down"), filter=is_normal_mode & is_structure_view)
+    def _(event):
+        state.structure_state.move_selected_item_order(1)
     @kb.add("right", filter=is_normal_mode & is_structure_view)
     def _(event):
         if state.has_pending_transfer():
@@ -192,9 +214,9 @@ def run():
     def _(event):
         state.structure_state.cancel_selected_item()
 
-    @kb.add("f", filter=is_normal_mode & is_structure_view)
+    @kb.add("p", filter=is_normal_mode & is_structure_view)
     def _(event):
-        state.structure_state.focus_selected_item()
+        state.structure_state.toggle_pin_selected_item()
 
     @kb.add("a", filter=is_normal_mode & is_structure_view)
     def _(event):
@@ -249,6 +271,14 @@ def run():
     @kb.add("down", filter=is_normal_mode & is_box_view)
     def _(event):
         state.box_state.move_cursor(1)
+
+    @_safe_add("m-up", fallback_keys=("escape", "up"), filter=is_normal_mode & is_box_view)
+    def _(event):
+        state.box_state.move_selected_item_order(-1)
+
+    @_safe_add("m-down", fallback_keys=("escape", "down"), filter=is_normal_mode & is_box_view)
+    def _(event):
+        state.box_state.move_selected_item_order(1)
 
     @kb.add("i", filter=is_normal_mode & is_box_view)
     def _(event):
@@ -351,31 +381,12 @@ def run():
 
     @kb.add("i", filter=is_normal_mode & is_timeline_view)
     def _(event):
-        """View details of selected session or takeaway."""
+        """View details of selected session."""
         state.open_item_info()
-
-    @kb.add("=", filter=is_normal_mode & is_timeline_view)
-    @kb.add("+", filter=is_normal_mode & is_timeline_view)
-    def _(event):
-        """Create new takeaway for selected session."""
-        if state.timeline_state.get_parent_session_for_selected() is not None:
-            state.start_input(InputPurpose.ADD)
-            if state.ui_mode == UIMode.INPUT:
-                layout_manager.sync_all_text_buffers_from_state()
-                layout_manager.focus_current_field(event.app.layout)
-
-    @kb.add("r", filter=is_normal_mode & is_timeline_view)
-    def _(event):
-        """Edit selected takeaway."""
-        if state.timeline_state.is_selected_takeaway():
-            state.start_input(InputPurpose.EDIT)
-            if state.ui_mode == UIMode.INPUT:
-                layout_manager.sync_all_text_buffers_from_state()
-                layout_manager.focus_current_field(event.app.layout)
 
     @kb.add("backspace", filter=is_normal_mode & is_timeline_view)
     def _(event):
-        """Delete selected session or takeaway."""
+        """Delete selected session."""
         state.ask_confirm(ConfirmAction.DELETE_TIMELINE_ITEM)
 
 

@@ -293,17 +293,37 @@ cli.py
 - 计时结束时
     - 响铃提醒
     - 激活至最前台 iTerm2（macOS 下）
-    - 自动进入 Finish Session 流程，询问 Takeaways 并保存
+    - 自动进入 Finish Session 流程，询问 takeaway 并保存
     - 若用户取消 Finish Session，则重置计时
     - 若用户保存 Session，则进入 5 分钟休息模式，按 Space 开始休息
     - 休息结束时，响铃提醒，并重置计时
-    
+
+
+### v0.0.9 2026-01-04 重大更新
+
+计划：
+1. 时间显示优化：显示当地时间；✅
+    - Timeline：按本地日期分组；Session 时间显示为本地时间（HH:MM）
+    - Info：所有 datetime 字段显示为本地时间
+    - 数据仍以 UTC 存储；模型层统一将 SQLite 读出的 naive datetime 视为 UTC 并补齐 tzinfo
+2. 增加 structure(track/project/todo) 和 box(todo/idea) 的顺序调整功能（alt+up/down arrow，order_index）✅
+3. （重大更新）取消 takeaway 及其所有相关功能。session结束时改为记录 session description 并保存✅
+4. 调整：增加 pinned 字段，取消 project 的 focusing status.✅
+
+
+### v0.1.0 2026-01-15 修复细节bug，优化体验，上线 github，改名为 ToFlow
+
+
+
+
 
 
 ### Future TODO:
+
 
 1. URL 解析和跳转
 2. 记录 Done List
 3. NOW 行动器增加任务推荐功能 
 4. NOW 行动器增加 Pin Item 功能
+5. Model 中的local time字段去除，所有时间都使用 UTC 时间
 5. 中文输入法操作优化

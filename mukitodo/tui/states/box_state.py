@@ -132,6 +132,36 @@ class BoxState:
         self._message.set(result)
         return result
 
+    def move_selected_item_order(self, direction: int) -> Result:
+        """
+        Alt+↑/↓: Move selected item by swapping order_index with neighbor.
+
+        Sorting source of truth is order_index (0..n-1). After move we reload lists
+        and re-focus by id to keep cursor on the moved item.
+        """
+        if direction not in (-1, 1):
+            result = Result(False, None, "direction must be -1 or +1")
+            self._message.set(result)
+            return result
+
+        item_type, item_id = self.get_selected_item_context()
+        if item_type == "none" or item_id is None:
+            result = Result(False, None, "No item selected")
+            self._message.set(result)
+            return result
+
+        if item_type == "todo":
+            result = actions.move_todo_order(item_id, direction)
+        else:
+            result = actions.move_idea_order(item_id, direction)
+
+        if result.success:
+            self.load_box_lists()
+            self.focus_item_by_id(item_type=item_type, item_id=item_id)
+
+        self._message.set(result)
+        return result
+
     # === Selected Context ==================================================
 
     def get_selected_item_context(self) -> tuple[str, int | None]:

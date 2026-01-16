@@ -303,7 +303,7 @@ def info_content(*, state, h: RenderHelpers) -> ViewContent:
         if value is None:
             display_value = "None"
         elif isinstance(value, datetime):
-            display_value = value.strftime("%Y-%m-%d %H:%M:%S")
+            display_value = value.astimezone().strftime("%Y-%m-%d %H:%M:%S")
         else:
             display_value = str(value)
 
@@ -354,63 +354,32 @@ def timeline_content(*, state, h: RenderHelpers) -> ViewContent:
                 selection = SelectedLine(line_idx=len(lines) - 1)
             continue
 
-        if row_type == "takeaway":
-            line = _timeline_takeaway_line(row[1], row[2], is_last=row[3], is_selected=is_selected, is_standalone=False)
-            lines.append(line)
-            if is_selected:
-                selection = SelectedLine(line_idx=len(lines) - 1)
-            continue
-
-        if row_type == "standalone_takeaway":
-            line = _timeline_takeaway_line(row[1], 0, is_last=True, is_selected=is_selected, is_standalone=True)
-            lines.append(line)
-            if is_selected:
-                selection = SelectedLine(line_idx=len(lines) - 1)
-            continue
-
     return ViewContent(lines=lines, selection=selection)
 
 
 def _timeline_session_line(session_dict: dict, session_num: int, *, is_selected: bool) -> Line:
     ended_at = session_dict.get("ended_at_utc")
     started_at = session_dict.get("started_at_utc")
-    time_str = ended_at.strftime("%H:%M") if ended_at else "??:??"
-    if started_at and ended_at:
+    time_str = ended_at.astimezone().strftime("%H:%M") if ended_at else "??:??"
+    duration_minutes = session_dict.get("duration_minutes")
+    if duration_minutes is not None:
+        duration_str = f"{int(duration_minutes)}m"
+    elif started_at and ended_at:
         duration_min = int((ended_at - started_at).total_seconds() // 60)
         duration_str = f"{duration_min}m"
     else:
         duration_str = "?m"
     parent_info = session_dict.get("parent_info", "")
-    prefix = "▸ " if is_selected else "  "
-    style = "class:selected" if is_selected else ""
-    return [(style, f"{prefix}{time_str} {duration_str} Session {session_num}: {parent_info}")]
-
-
-def _timeline_takeaway_line(
-    takeaway_dict: dict,
-    takeaway_num: int,
-    *,
-    is_last: bool,
-    is_selected: bool,
-    is_standalone: bool,
-) -> Line:
-    created_at = takeaway_dict.get("created_at_utc")
-    time_str = created_at.strftime("%H:%M") if created_at else "??:??"
-    takeaway_type = takeaway_dict.get("type", "action")
-    title = takeaway_dict.get("title", "")
-    content = takeaway_dict.get("content", "")
-    preview_chars = constants.TIMELINE_TAKEAWAY_PREVIEW_CHARS
-    display_text = title if title else (content[:preview_chars] + "..." if len(content) > preview_chars else content)
-
-    prefix = "▸ " if is_selected else "  "
-    style = "class:selected" if is_selected else ""
-    if is_standalone:
-        parent_info = takeaway_dict.get("parent_info", "")
-        text = f"{prefix}{time_str} Takeaway: [{takeaway_type}] {parent_info} · {display_text}"
+    description = (session_dict.get("description") or "").strip()
+    if description:
+        preview_chars = constants.TIMELINE_TAKEAWAY_PREVIEW_CHARS
+        description_preview = description[:preview_chars] + "..." if len(description) > preview_chars else description
+        description_suffix = f" · {description_preview}"
     else:
-        tree_symbol = "└──" if is_last else "├──"
-        text = f"{prefix}  {tree_symbol} {time_str} Takeaway {takeaway_num}: [{takeaway_type}] · {display_text}"
-    return [(style, text)]
+        description_suffix = ""
+    prefix = "▸ " if is_selected else "  "
+    style = "class:selected" if is_selected else ""
+    return [(style, f"{prefix}{time_str} {duration_str} Session {session_num}: {parent_info}{description_suffix}")]
 
 
 # =============================================================================

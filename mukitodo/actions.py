@@ -1,9 +1,9 @@
 from dataclasses import dataclass
-from datetime import datetime, date as date_type, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from mukitodo.database import db_session
-from mukitodo.models import Track, Project, TodoItem, IdeaItem, NowSession, Takeaway
+from mukitodo.models import Track, Project, TodoItem, IdeaItem, NowSession
 
 
 @dataclass
@@ -41,12 +41,11 @@ def _get_project_status_order():
     """Return SQLAlchemy CASE expression for project status ordering."""
     from sqlalchemy import case
     return case(
-        (Project.status == "focusing", 1),
-        (Project.status == "active", 2),
-        (Project.status == "sleeping", 3),
-        (Project.status == "finished", 4),
-        (Project.status == "cancelled", 5),
-        else_=6
+        (Project.status == "active", 1),
+        (Project.status == "sleeping", 2),
+        (Project.status == "finished", 3),
+        (Project.status == "cancelled", 4),
+        else_=5
     )
 
 def _get_todo_status_order():
@@ -72,6 +71,51 @@ def _get_idea_status_order():
     )
 
 
+# == Order Index Helpers ====================================================
+
+def _normalize_order_index(items: list[Any]) -> bool:
+    """
+    Ensure items have contiguous order_index = 0..n-1 in their current order.
+
+    Returns True if any item was updated.
+    """
+    changed = False
+    for idx, it in enumerate(items):
+        if getattr(it, "order_index", None) != idx:
+            it.order_index = idx
+            changed = True
+    return changed
+
+
+def _swap_order_index_in_list(*, items: list[Any], item_id: int, direction: int) -> tuple[bool, str]:
+    """
+    Swap order_index for item_id with its neighbor in `direction` within `items`.
+
+    Preconditions:
+    - items are already normalized (order_index matches list order).
+    - direction is -1 or +1.
+    """
+    if direction not in (-1, 1):
+        return (False, "direction must be -1 or +1")
+
+    pos: int | None = None
+    for i, it in enumerate(items):
+        if int(getattr(it, "id")) == int(item_id):
+            pos = i
+            break
+    if pos is None:
+        return (False, "Item not found in scope")
+
+    nxt = pos + direction
+    if nxt < 0 or nxt >= len(items):
+        return (False, "Already at boundary")
+
+    a = items[pos]
+    b = items[nxt]
+    a.order_index, b.order_index = b.order_index, a.order_index
+    return (True, "OK")
+
+
 # == Track Actions ========================================================
 
 # Basic CRUD
@@ -91,7 +135,7 @@ def create_track(name: str, description: str | None = None) -> Result:
     return Result(True, track_id, f"Track '{track_name}' created successfully")
 
 def delete_track(track_id: int) -> Result:
-    '''Delete a track and all related items (projects, todos, sessions, takeaways). Result.data: (deleted) track.name'''
+    '''Delete a track and all related items (projects, todos, sessions). Result.data: (deleted) track.name'''
     with db_session() as session:
         track = session.query(Track).filter_by(id=track_id).first()
         if not track:
@@ -108,26 +152,10 @@ def delete_track(track_id: int) -> Result:
             todos = session.query(TodoItem).filter(TodoItem.project_id.in_(project_ids)).all()
             todo_ids = [t.id for t in todos]
 
-            # Get all session IDs that will be deleted (for deleting related takeaways)
-            session_ids_to_delete = []
             if todo_ids:
-                todo_session_ids = [s.id for s in session.query(NowSession).filter(NowSession.todo_item_id.in_(todo_ids)).all()]
-                session_ids_to_delete.extend(todo_session_ids)
-            project_session_ids = [s.id for s in session.query(NowSession).filter(NowSession.project_id.in_(project_ids)).all()]
-            session_ids_to_delete.extend(project_session_ids)
-
-            # Delete takeaways related to sessions that will be deleted
-            if session_ids_to_delete:
-                session.query(Takeaway).filter(Takeaway.now_session_id.in_(session_ids_to_delete)).delete(synchronize_session=False)
-
-            # Delete takeaways related to these todos
-            if todo_ids:
-                session.query(Takeaway).filter(Takeaway.todo_item_id.in_(todo_ids)).delete(synchronize_session=False)
                 # Delete sessions related to these todos
                 session.query(NowSession).filter(NowSession.todo_item_id.in_(todo_ids)).delete(synchronize_session=False)
 
-            # Delete takeaways related to these projects
-            session.query(Takeaway).filter(Takeaway.project_id.in_(project_ids)).delete(synchronize_session=False)
             # Delete sessions related to these projects
             session.query(NowSession).filter(NowSession.project_id.in_(project_ids)).delete(synchronize_session=False)
 
@@ -141,9 +169,6 @@ def delete_track(track_id: int) -> Result:
 
             # Delete all projects
             session.query(Project).filter_by(track_id=track_id).delete(synchronize_session=False)
-
-        # Delete takeaways related to this track
-        session.query(Takeaway).filter_by(track_id=track_id).delete(synchronize_session=False)
 
         # Finally delete the track
         session.delete(track)
@@ -159,11 +184,11 @@ def list_tracks_id() -> Result:
     return Result(True, data, f"Found {len(tracks)} tracks")
 
 def list_tracks_dict(include_tui_meta: bool = False) -> Result:
-    '''List all tracks as dict, sorted by status then by ID. Result.data: list[dict]'''
+    '''List all tracks as dict, sorted by order_index then by ID. Result.data: list[dict]'''
     with db_session() as session:
         tracks = session.query(Track)\
             .filter_by(archived=False)\
-            .order_by(_get_track_status_order(), Track.id)\
+            .order_by(Track.order_index.asc().nulls_last(), Track.id)\
             .all()
         data = [t.to_dict() for t in tracks]
 
@@ -277,7 +302,25 @@ def unarchive_track(track_id: int) -> Result:
     
     return Result(True, None, f"Track '{track_name}' unarchived")
 
-# def reorder ...
+def move_track_order(track_id: int, direction: int) -> Result:
+    """Alt+↑/↓: swap order_index with neighbor (Tracks scope)."""
+    with db_session() as session:
+        track = session.query(Track).filter_by(id=track_id, archived=False).first()
+        if not track:
+            return Result(False, None, f"Track {track_id} not found")
+
+        tracks = (
+            session.query(Track)
+            .filter(Track.archived == False)  # noqa: E712
+            .order_by(Track.order_index.asc().nulls_last(), Track.id)
+            .all()
+        )
+        _normalize_order_index(tracks)
+        ok, reason = _swap_order_index_in_list(items=tracks, item_id=track_id, direction=direction)
+        if not ok:
+            return Result(False, None, "已到边界/不能移动" if reason == "Already at boundary" else reason)
+
+        return Result(True, None, f"Track '{track.name}' moved")
 
 
 
@@ -324,7 +367,7 @@ def create_project(
     return Result(True, project_id, f"Project '{project_name}' created successfully")
 
 def delete_project(project_id: int) -> Result:
-    '''Delete a project and all related items (todos, sessions, takeaways). Result.data: project_name'''
+    '''Delete a project and all related items (todos, sessions). Result.data: project_name'''
     with db_session() as session:
         project = session.query(Project).filter_by(id=project_id).first()
         if not project:
@@ -336,26 +379,10 @@ def delete_project(project_id: int) -> Result:
         todos = session.query(TodoItem).filter_by(project_id=project_id).all()
         todo_ids = [t.id for t in todos]
 
-        # Get all session IDs that will be deleted (for deleting related takeaways)
-        session_ids_to_delete = []
         if todo_ids:
-            todo_session_ids = [s.id for s in session.query(NowSession).filter(NowSession.todo_item_id.in_(todo_ids)).all()]
-            session_ids_to_delete.extend(todo_session_ids)
-        project_session_ids = [s.id for s in session.query(NowSession).filter_by(project_id=project_id).all()]
-        session_ids_to_delete.extend(project_session_ids)
-
-        # Delete takeaways related to sessions that will be deleted
-        if session_ids_to_delete:
-            session.query(Takeaway).filter(Takeaway.now_session_id.in_(session_ids_to_delete)).delete(synchronize_session=False)
-
-        # Delete takeaways related to todos
-        if todo_ids:
-            session.query(Takeaway).filter(Takeaway.todo_item_id.in_(todo_ids)).delete(synchronize_session=False)
             # Delete sessions related to todos
             session.query(NowSession).filter(NowSession.todo_item_id.in_(todo_ids)).delete(synchronize_session=False)
 
-        # Delete takeaways related to this project
-        session.query(Takeaway).filter_by(project_id=project_id).delete(synchronize_session=False)
         # Delete sessions related to this project
         session.query(NowSession).filter_by(project_id=project_id).delete(synchronize_session=False)
 
@@ -382,11 +409,11 @@ def list_projects_id(track_id: int) -> Result:
     return Result(True, data, f"Found {len(projects)} projects")
 
 def list_projects_dict(track_id: int, include_tui_meta: bool = False) -> Result:
-    '''List all projects as dict, sorted by status then by ID. Result.data: list[dict]'''
+    '''List all projects as dict, sorted by order_index then by ID. Result.data: list[dict]'''
     with db_session() as session:
         projects = session.query(Project)\
             .filter_by(track_id=track_id, archived=False)\
-            .order_by(_get_project_status_order(), Project.id)\
+            .order_by(Project.order_index.asc().nulls_last(), Project.id)\
             .all()
         data = [p.to_dict() for p in projects]
 
@@ -428,30 +455,11 @@ def list_projects_dict(track_id: int, include_tui_meta: bool = False) -> Result:
             )
             todo_session_map = {pid: int(cnt) for pid, cnt in todo_session_rows}
 
-            # --- Takeaway count: direct on project + via todos under the project ---
-            direct_takeaway_rows = (
-                session.query(Takeaway.project_id, func.count(Takeaway.id))
-                .filter(Takeaway.project_id.in_(project_ids))
-                .group_by(Takeaway.project_id)
-                .all()
-            )
-            direct_takeaway_map = {pid: int(cnt) for pid, cnt in direct_takeaway_rows}
-
-            todo_takeaway_rows = (
-                session.query(TodoItem.project_id, func.count(Takeaway.id))
-                .join(Takeaway, Takeaway.todo_item_id == TodoItem.id)
-                .filter(TodoItem.project_id.in_(project_ids))
-                .group_by(TodoItem.project_id)
-                .all()
-            )
-            todo_takeaway_map = {pid: int(cnt) for pid, cnt in todo_takeaway_rows}
-
             for d in data:
                 pid = d["id"]
                 meta = _ensure_tui_meta(d)
                 meta["child_todo_count"] = child_todo_count_map.get(pid, 0)
                 meta["session_count"] = direct_session_map.get(pid, 0) + todo_session_map.get(pid, 0)
-                meta["takeaway_count"] = direct_takeaway_map.get(pid, 0) + todo_takeaway_map.get(pid, 0)
 
     return Result(True, data, f"Found {len(projects)} projects")
 
@@ -543,17 +551,29 @@ def activate_project(project_id: int) -> Result:
     
     return Result(True, None, f"Project '{project_name}' activated")
 
-def focus_project(project_id: int) -> Result:
-    '''Focus a project. Result.data: None'''
+
+def toggle_project_pinned(project_id: int) -> Result:
+    '''Toggle a project's pinned state. Result.data: pinned(bool)'''
     with db_session() as session:
         project = session.query(Project).filter_by(id=project_id).first()
         if not project:
             return Result(False, None, f"Project {project_id} not found")
-        
+
         project_name = project.name
-        project.status = "focusing"
-    
-    return Result(True, None, f"Project '{project_name}' set to focusing")
+        # Rule: only ACTIVE items can be pinned.
+        # Allow unpin regardless of current status (for cleanup / backward compatibility).
+        if bool(project.pinned):
+            project.pinned = False
+            pinned = False
+        else:
+            if str(project.status or "active") != "active":
+                return Result(False, None, f"Only active projects can be pinned (Project '{project_name}' is {project.status})")
+            project.pinned = True
+            pinned = True
+
+    message = f"Project '{project_name}' pinned" if pinned else f"Project '{project_name}' unpinned"
+    return Result(True, pinned, message)
+
 
 def sleep_project(project_id: int) -> Result:
     '''Sleep a project. Result.data: None'''
@@ -563,6 +583,7 @@ def sleep_project(project_id: int) -> Result:
             return Result(False, None, f"Project {project_id} not found")
         
         project_name = project.name
+        project.pinned = False
         project.status = "sleeping"
     
     return Result(True, None, f"Project '{project_name}' set to sleeping")
@@ -575,6 +596,7 @@ def cancel_project(project_id: int) -> Result:
             return Result(False, None, f"Project {project_id} not found")
         
         project_name = project.name
+        project.pinned = False
         project.status = "cancelled"
     
     return Result(True, None, f"Project '{project_name}' cancelled")
@@ -587,6 +609,7 @@ def finish_project(project_id: int) -> Result:
             return Result(False, None, f"Project {project_id} not found")
         
         project_name = project.name
+        project.pinned = False
         project.status = "finished"
     
     return Result(True, None, f"Project '{project_name}' finished")
@@ -600,6 +623,7 @@ def archive_project(project_id: int) -> Result:
             return Result(False, None, f"Project {project_id} not found")
         
         project_name = project.name
+        project.pinned = False
         project.archived = True
         project.archived_at_utc = datetime.now(timezone.utc)
     
@@ -620,6 +644,25 @@ def unarchive_project(project_id: int) -> Result:
 
 
 # def reorder ...
+def move_project_order(project_id: int, direction: int) -> Result:
+    """Alt+↑/↓: swap order_index with neighbor (Projects within a track)."""
+    with db_session() as session:
+        project = session.query(Project).filter_by(id=project_id, archived=False).first()
+        if not project:
+            return Result(False, None, f"Project {project_id} not found")
+
+        projects = (
+            session.query(Project)
+            .filter_by(track_id=project.track_id, archived=False)
+            .order_by(Project.order_index.asc().nulls_last(), Project.id)
+            .all()
+        )
+        _normalize_order_index(projects)
+        ok, reason = _swap_order_index_in_list(items=projects, item_id=project_id, direction=direction)
+        if not ok:
+            return Result(False, None, "已到边界/不能移动" if reason == "Already at boundary" else reason)
+
+        return Result(True, None, f"Project '{project.name}' moved")
 
 
 
@@ -715,21 +758,11 @@ def create_box_todo(
 
 
 def delete_todo(todo_item_id: int) -> Result:
-    '''Delete a todo item and all related items (sessions, takeaways). Result.data: None'''
+    '''Delete a todo item and all related items (sessions). Result.data: None'''
     with db_session() as session:
         todo = session.query(TodoItem).filter_by(id=todo_item_id).first()
         if not todo:
             return Result(False, None, f"Todo {todo_item_id} not found")
-
-        # Get all session IDs related to this todo (for deleting related takeaways)
-        session_ids = [s.id for s in session.query(NowSession).filter_by(todo_item_id=todo_item_id).all()]
-
-        # Delete takeaways related to sessions that will be deleted
-        if session_ids:
-            session.query(Takeaway).filter(Takeaway.now_session_id.in_(session_ids)).delete(synchronize_session=False)
-
-        # Delete takeaways related to this todo
-        session.query(Takeaway).filter_by(todo_item_id=todo_item_id).delete(synchronize_session=False)
 
         # Delete sessions related to this todo
         session.query(NowSession).filter_by(todo_item_id=todo_item_id).delete(synchronize_session=False)
@@ -748,11 +781,11 @@ def list_structure_todos(project_id: int) -> Result:
     return Result(True, data, f"Found {len(todos)} todos")
 
 def list_structure_todos_dict(project_id: int, include_tui_meta: bool = False) -> Result:
-    '''List all structure todo items as dict, sorted by status then by ID. Result.data: list[dict]'''
+    '''List all structure todo items as dict, sorted by order_index then by ID. Result.data: list[dict]'''
     with db_session() as session:
         todos = session.query(TodoItem)\
             .filter_by(project_id=project_id, archived=False)\
-            .order_by(_get_todo_status_order(), TodoItem.id)\
+            .order_by(TodoItem.order_index.asc().nulls_last(), TodoItem.id)\
             .all()
         data = [t.to_dict() for t in todos]
 
@@ -772,19 +805,10 @@ def list_structure_todos_dict(project_id: int, include_tui_meta: bool = False) -
             )
             session_count_map = {tid: int(cnt) for tid, cnt in session_rows}
 
-            takeaway_rows = (
-                session.query(Takeaway.todo_item_id, func.count(Takeaway.id))
-                .filter(Takeaway.todo_item_id.in_(todo_ids))
-                .group_by(Takeaway.todo_item_id)
-                .all()
-            )
-            takeaway_count_map = {tid: int(cnt) for tid, cnt in takeaway_rows}
-
             for d in data:
                 tid = d["id"]
                 meta = _ensure_tui_meta(d)
                 meta["session_count"] = session_count_map.get(tid, 0)
-                meta["takeaway_count"] = takeaway_count_map.get(tid, 0)
 
     return Result(True, data, f"Found {len(todos)} todos")
 
@@ -798,7 +822,7 @@ def list_box_todos() -> Result:
 
 def list_box_todos_dict(include_tui_meta: bool = False) -> Result:
     """
-    List all box todo items as dict, sorted by status then by ID.
+    List all box todo items as dict, sorted by order_index then by ID.
     Box Todo is represented by TodoItem.project_id IS NULL.
     Result.data: list[dict]
     """
@@ -806,7 +830,7 @@ def list_box_todos_dict(include_tui_meta: bool = False) -> Result:
         todos = (
             session.query(TodoItem)
             .filter(TodoItem.project_id.is_(None), TodoItem.archived == False)  # noqa: E712
-            .order_by(_get_todo_status_order(), TodoItem.id)
+            .order_by(TodoItem.order_index.asc().nulls_last(), TodoItem.id)
             .all()
         )
         data = [t.to_dict() for t in todos]
@@ -827,19 +851,10 @@ def list_box_todos_dict(include_tui_meta: bool = False) -> Result:
             )
             session_count_map = {tid: int(cnt) for tid, cnt in session_rows}
 
-            takeaway_rows = (
-                session.query(Takeaway.todo_item_id, func.count(Takeaway.id))
-                .filter(Takeaway.todo_item_id.in_(todo_ids))
-                .group_by(Takeaway.todo_item_id)
-                .all()
-            )
-            takeaway_count_map = {tid: int(cnt) for tid, cnt in takeaway_rows}
-
             for d in data:
                 tid = d["id"]
                 meta = _ensure_tui_meta(d)
                 meta["session_count"] = session_count_map.get(tid, 0)
-                meta["takeaway_count"] = takeaway_count_map.get(tid, 0)
 
     return Result(True, data, f"Found {len(todos)} box todos")
 
@@ -922,6 +937,30 @@ def activate_todo(todo_item_id: int) -> Result:
     
     return Result(True, None, f"Todo '{todo_name}' activated")
 
+
+def toggle_todo_pinned(todo_item_id: int) -> Result:
+    '''Toggle a todo item's pinned state. Result.data: pinned(bool)'''
+    with db_session() as session:
+        todo = session.query(TodoItem).filter_by(id=todo_item_id).first()
+        if not todo:
+            return Result(False, None, f"Todo {todo_item_id} not found")
+
+        todo_name = todo.name
+        # Rule: only ACTIVE items can be pinned.
+        # Allow unpin regardless of current status (for cleanup / backward compatibility).
+        if bool(todo.pinned):
+            todo.pinned = False
+            pinned = False
+        else:
+            if str(todo.status or "active") != "active":
+                return Result(False, None, f"Only active todos can be pinned (Todo '{todo_name}' is {todo.status})")
+            todo.pinned = True
+            pinned = True
+
+    message = f"Todo '{todo_name}' pinned" if pinned else f"Todo '{todo_name}' unpinned"
+    return Result(True, pinned, message)
+
+
 def done_todo(todo_item_id: int) -> Result:
     '''Mark a todo item as done. Result.data: None'''
     with db_session() as session:
@@ -930,6 +969,7 @@ def done_todo(todo_item_id: int) -> Result:
             return Result(False, None, f"Todo {todo_item_id} not found")
         
         todo_name = todo.name
+        todo.pinned = False
         todo.status = "done"
         # Stage semantics: "done" implies full progress.
         todo.current_stage = int(todo.total_stages or 1)
@@ -1031,6 +1071,7 @@ def advance_todo_stage(todo_item_id: int) -> Result:
             return Result(True, None, f"Todo '{todo_name}' progress {todo.current_stage}/{todo.total_stages}")
 
         # Finish
+        todo.pinned = False
         todo.status = "done"
         todo.current_stage = total
         todo.completed_at_utc = datetime.now(timezone.utc)
@@ -1079,6 +1120,7 @@ def apply_todo_stage_delta(todo_item_id: int, *, stages_completed: int) -> Resul
         # Apply delta.
         nxt = cur + delta
         if nxt >= total:
+            todo.pinned = False
             todo.status = "done"
             todo.total_stages = total
             todo.current_stage = total
@@ -1100,6 +1142,7 @@ def sleep_todo(todo_item_id: int) -> Result:
             return Result(False, None, f"Todo {todo_item_id} not found")
 
         todo_name = todo.name
+        todo.pinned = False
         todo.status = "sleeping"
         todo.completed_at_utc = None
 
@@ -1113,6 +1156,7 @@ def cancel_todo(todo_item_id: int) -> Result:
             return Result(False, None, f"Todo {todo_item_id} not found")
 
         todo_name = todo.name
+        todo.pinned = False
         todo.status = "cancelled"
         todo.completed_at_utc = None
 
@@ -1127,6 +1171,7 @@ def archive_todo(todo_item_id: int) -> Result:
             return Result(False, None, f"Todo {todo_item_id} not found")
         
         todo_name = todo.name
+        todo.pinned = False
         todo.archived = True
         todo.archived_at_utc = datetime.now(timezone.utc)
     
@@ -1172,6 +1217,34 @@ def move_todo_to_box(todo_item_id: int) -> Result:
 
 
 # def reorder ...
+def move_todo_order(todo_item_id: int, direction: int) -> Result:
+    """Alt+↑/↓: swap order_index with neighbor (Todos within project or box scope)."""
+    with db_session() as session:
+        todo = session.query(TodoItem).filter_by(id=todo_item_id, archived=False).first()
+        if not todo:
+            return Result(False, None, f"Todo {todo_item_id} not found")
+
+        if todo.project_id is None:
+            todos = (
+                session.query(TodoItem)
+                .filter(TodoItem.project_id.is_(None), TodoItem.archived == False)  # noqa: E712
+                .order_by(TodoItem.order_index.asc().nulls_last(), TodoItem.id)
+                .all()
+            )
+        else:
+            todos = (
+                session.query(TodoItem)
+                .filter_by(project_id=todo.project_id, archived=False)
+                .order_by(TodoItem.order_index.asc().nulls_last(), TodoItem.id)
+                .all()
+            )
+
+        _normalize_order_index(todos)
+        ok, reason = _swap_order_index_in_list(items=todos, item_id=todo_item_id, direction=direction)
+        if not ok:
+            return Result(False, None, "已到边界/不能移动" if reason == "Already at boundary" else reason)
+
+        return Result(True, None, f"Todo '{todo.name}' moved")
 
 
 
@@ -1222,12 +1295,12 @@ def list_idea_items() -> Result:
     return Result(True, data, f"Found {len(ideas)} ideas")
 
 def list_idea_items_dict() -> Result:
-    """List all idea items as dict, sorted by status then by ID. Result.data: list[dict]."""
+    """List all idea items as dict, sorted by order_index then by ID. Result.data: list[dict]."""
     with db_session() as session:
         ideas = (
             session.query(IdeaItem)
             .filter(IdeaItem.archived == False)  # noqa: E712
-            .order_by(_get_idea_status_order(), IdeaItem.id)
+            .order_by(IdeaItem.order_index.asc().nulls_last(), IdeaItem.id)
             .all()
         )
         data = [i.to_dict() for i in ideas]
@@ -1389,7 +1462,25 @@ def unarchive_idea_item(idea_item_id: int) -> Result:
     
     return Result(True, None, f"Idea '{idea_name}' unarchived")
 
-# def reorder ...
+def move_idea_order(idea_item_id: int, direction: int) -> Result:
+    """Alt+↑/↓: swap order_index with neighbor (Ideas scope)."""
+    with db_session() as session:
+        idea = session.query(IdeaItem).filter_by(id=idea_item_id, archived=False).first()
+        if not idea:
+            return Result(False, None, f"Idea {idea_item_id} not found")
+
+        ideas = (
+            session.query(IdeaItem)
+            .filter(IdeaItem.archived == False)  # noqa: E712
+            .order_by(IdeaItem.order_index.asc().nulls_last(), IdeaItem.id)
+            .all()
+        )
+        _normalize_order_index(ideas)
+        ok, reason = _swap_order_index_in_list(items=ideas, item_id=idea_item_id, direction=direction)
+        if not ok:
+            return Result(False, None, "已到边界/不能移动" if reason == "Already at boundary" else reason)
+
+        return Result(True, None, f"Idea '{idea.name}' moved")
 
 
 
@@ -1444,16 +1535,11 @@ def recover_session() -> Result:
 
 
 def delete_session(now_session_id: int) -> Result:
-    '''Delete a now session and unlink related takeaways. Result.data: None'''
+    '''Delete a now session. Result.data: None'''
     with db_session() as session:
         now_session = session.query(NowSession).filter_by(id=now_session_id).first()
         if not now_session:
             return Result(False, None, f"Session {now_session_id} not found")
-
-        # Unlink takeaways from this session (set now_session_id to NULL)
-        session.query(Takeaway).filter_by(now_session_id=now_session_id).update(
-            {"now_session_id": None}, synchronize_session=False
-        )
 
         # Finally delete the session
         session.delete(now_session)
@@ -1484,201 +1570,45 @@ def get_session(now_session_id: int) -> Result:
     return Result(True, data, f"Session {session_id} retrieved")
 
 
+def update_session_description(now_session_id: int, description: str | None) -> Result:
+    '''Update a now session description. Result.data: None'''
+    cleaned = (description or "").strip()
+    cleaned_or_none = cleaned if cleaned else None
 
-def link_session_to_takeaway(now_session_id: int, takeaway_id: int) -> Result:
-    '''Link a now session to a takeaway. Result.data: None'''
     with db_session() as session:
         now_session = session.query(NowSession).filter_by(id=now_session_id).first()
         if not now_session:
             return Result(False, None, f"Session {now_session_id} not found")
-        
-        takeaway = session.query(Takeaway).filter_by(id=takeaway_id).first()
-        if not takeaway:
-            return Result(False, None, f"Takeaway {takeaway_id} not found")
-    
-    return Result(False, None, "Link session to takeaway: not implemented")
 
+        now_session.description = cleaned_or_none
 
+    return Result(True, None, "Session description updated")
 
-
-
-
-
-# == Takeaway Actions ========================================================
-
-def create_takeaway(
-    title: str | None,
-    content: str,
-    type: str,
-    date: date_type,
-    track_id: int | None = None,
-    project_id: int | None = None,
-    todo_item_id: int | None = None,
-    now_session_id: int | None = None
-) -> Result:
-    '''Create a new takeaway. Result.data: takeaway_id. If title is None, it will be auto generated.
-    Attention: only one of track_id, project_id, todo_item_id should be provided.'''
-
-    # only one
-    if sum([track_id is not None, project_id is not None, todo_item_id is not None]) != 1:
-        return Result(False, None, "Only one of track_id, project_id, todo_item_id, now_session_id should be provided")
-
-    if not content:
-        return Result(False, None, "Takeaway content is required")
-    
-    if not title:
-        title = content[:30] + "..." if len(content) > 30 else content
-    
-    with db_session() as session:
-        takeaway = Takeaway(
-            title=title,
-            content=content,
-            type=type,
-            date=date,
-            track_id=track_id,
-            project_id=project_id,
-            todo_item_id=todo_item_id,
-            now_session_id=now_session_id
-        )
-        session.add(takeaway)
-        session.flush()  # Get takeaway.id
-        takeaway_id = takeaway.id
-        takeaway_title = takeaway.title
-    
-    return Result(True, takeaway_id, f"Takeaway '{takeaway_title}' created successfully")
-
-
-def delete_takeaway(takeaway_id: int) -> Result:
-    '''Delete a takeaway. Result.data: None'''
-    with db_session() as session:
-        takeaway = session.query(Takeaway).filter_by(id=takeaway_id).first()
-        if not takeaway:
-            return Result(False, None, f"Takeaway {takeaway_id} not found")
-        
-        session.delete(takeaway)
-    
-    return Result(True, None, f"Takeaway deleted successfully")
-
-def list_takeaways(track_id: int) -> Result:
-    '''List all takeaways. Result.data: list of takeaway ids'''
-    with db_session() as session:
-        takeaways = session.query(Takeaway).filter_by(track_id=track_id).all()
-        data = [t.id for t in takeaways]
-    
-    return Result(True, data, f"Found {len(takeaways)} takeaways")
-
-# more list actions in different contexts
-
-def get_takeaway_dict(takeaway_id: int) -> Result:
-    '''Get a takeaway by id. Result.data: takeaway dict'''
-    with db_session() as session:
-        takeaway = session.query(Takeaway).filter_by(id=takeaway_id).first()
-        
-        if not takeaway:
-            return Result(False, None, f"Takeaway {takeaway_id} not found")
-        
-        data = takeaway.to_dict()
-        takeaway_title = takeaway.title
-    
-    return Result(True, data, f"Takeaway '{takeaway_title}' retrieved")
-
-def update_takeaway_type(takeaway_id: int, type: str) -> Result:
-    '''Update a takeaway's type. Result.data: (new) type'''
-    with db_session() as session:
-        takeaway = session.query(Takeaway).filter_by(id=takeaway_id).first()
-        if not takeaway:
-            return Result(False, None, f"Takeaway {takeaway_id} not found")
-        
-        takeaway_title = takeaway.title
-        takeaway.type = type
-    
-    return Result(True, type, f"Takeaway '{takeaway_title}' type updated")
-
-def update_takeaway_title(takeaway_id: int, title: str) -> Result:
-    '''Update a takeaway's title. Result.data: (new) title'''
-    if not title:
-        return Result(False, None, "Takeaway title is required")
-    
-    with db_session() as session:
-        takeaway = session.query(Takeaway).filter_by(id=takeaway_id).first()
-        if not takeaway:
-            return Result(False, None, f"Takeaway {takeaway_id} not found")
-        
-        takeaway.title = title
-    
-    return Result(True, title, f"Takeaway title updated")
-
-def update_takeaway_content(takeaway_id: int, content: str) -> Result:
-    '''Update a takeaway's content. Result.data: (new) content'''
-    if not content:
-        return Result(False, None, "Takeaway content is required")
-    
-    with db_session() as session:
-        takeaway = session.query(Takeaway).filter_by(id=takeaway_id).first()
-        if not takeaway:
-            return Result(False, None, f"Takeaway {takeaway_id} not found")
-        
-        takeaway_title = takeaway.title
-        takeaway.content = content
-    
-    return Result(True, content, f"Takeaway '{takeaway_title}' content updated")
-
-def update_takeaway_date(takeaway_id: int, date: date_type) -> Result:
-    '''Update a takeaway's date. Result.data: (new) date'''
-    with db_session() as session:
-        takeaway = session.query(Takeaway).filter_by(id=takeaway_id).first()
-        if not takeaway:
-            return Result(False, None, f"Takeaway {takeaway_id} not found")
-
-        takeaway_title = takeaway.title
-        takeaway.date = date
-
-    return Result(True, date, f"Takeaway '{takeaway_title}' date updated")
 
 
 # == Timeline Actions ========================================================
 
 def list_timeline_records() -> Result:
     '''
-    List all Sessions and Takeaways for Timeline View.
+    List all completed Sessions for Timeline View.
 
     Returns:
-        Result.data: list[tuple[dict | None, list[dict]]]
-        Each element is (session_dict | None, [takeaway_dict, ...])
+        Result.data: list[dict]
+        Each element is session_dict.
 
-        - session_dict is not None and takeaways is not empty: Session with linked Takeaways
-        - session_dict is not None and takeaways is empty: Session without Takeaways
-        - session_dict is None and takeaways is not empty: Standalone Takeaways (no linked Session)
-
-        Sorted by time descending (session.ended_at_utc or takeaway.created_at_utc for standalone)
+        Sorted by time descending (session.ended_at_utc).
 
         session_dict contains extra field:
         - parent_info: str  # "Track/Project" or "Track/Project/Todo"
-
-        takeaway_dict contains extra field:
-        - parent_info: str  # For standalone takeaways only
     '''
     with db_session() as session:
         # Query all NowSessions with ended_at_utc (completed sessions)
-        all_sessions = session.query(NowSession)\
-            .filter(NowSession.ended_at_utc.isnot(None))\
-            .order_by(NowSession.ended_at_utc.desc())\
+        all_sessions = (
+            session.query(NowSession)
+            .filter(NowSession.ended_at_utc.isnot(None))
+            .order_by(NowSession.ended_at_utc.desc())
             .all()
-
-        # Query all Takeaways
-        all_takeaways = session.query(Takeaway).all()
-
-        # Build a mapping of session_id -> list of takeaways
-        session_takeaways_map: dict[int, list] = {}
-        standalone_takeaways: list = []
-
-        for takeaway in all_takeaways:
-            if takeaway.now_session_id is not None:
-                if takeaway.now_session_id not in session_takeaways_map:
-                    session_takeaways_map[takeaway.now_session_id] = []
-                session_takeaways_map[takeaway.now_session_id].append(takeaway)
-            else:
-                standalone_takeaways.append(takeaway)
+        )
 
         # Helper function to build parent_info for session
         def get_session_parent_info(ns: NowSession) -> str:
@@ -1705,65 +1635,13 @@ def list_timeline_records() -> Result:
                         parts = [project.name]
             return "/".join(parts) if parts else "Unknown"
 
-        # Helper function to build parent_info for standalone takeaway
-        def get_takeaway_parent_info(t: Takeaway) -> str:
-            parts = []
-            if t.todo_item_id:
-                todo = session.query(TodoItem).filter_by(id=t.todo_item_id).first()
-                if todo and todo.project_id:
-                    project = session.query(Project).filter_by(id=todo.project_id).first()
-                    if project:
-                        track = session.query(Track).filter_by(id=project.track_id).first()
-                        if track:
-                            parts = [track.name, project.name, todo.name]
-            elif t.project_id:
-                project = session.query(Project).filter_by(id=t.project_id).first()
-                if project:
-                    track = session.query(Track).filter_by(id=project.track_id).first()
-                    if track:
-                        parts = [track.name, project.name]
-            elif t.track_id:
-                track = session.query(Track).filter_by(id=t.track_id).first()
-                if track:
-                    parts = [track.name]
-            return "/".join(parts) if parts else "Unknown"
-
-        # Build result list
-        result_records: list[tuple[dict | None, list[dict], datetime]] = []
-
-        # Add sessions with their takeaways
+        session_dicts: list[dict] = []
         for ns in all_sessions:
             session_dict = ns.to_dict()
             session_dict["parent_info"] = get_session_parent_info(ns)
+            session_dicts.append(session_dict)
 
-            takeaways = session_takeaways_map.get(ns.id, [])
-            # Sort takeaways by created_at_utc
-            takeaways.sort(key=lambda t: t.created_at_utc)
-            takeaway_dicts = [t.to_dict() for t in takeaways]
-
-            # Use ended_at_utc for sorting (already filtered for non-None)
-            sort_time = ns.ended_at_utc
-            if sort_time is not None:
-                result_records.append((session_dict, takeaway_dicts, sort_time))
-
-        # Add standalone takeaways
-        for t in standalone_takeaways:
-            takeaway_dict = t.to_dict()
-            takeaway_dict["parent_info"] = get_takeaway_parent_info(t)
-
-            # Use created_at_utc for sorting
-            sort_time = t.created_at_utc
-            result_records.append((None, [takeaway_dict], sort_time))
-
-        # Sort all records by time descending
-        result_records.sort(key=lambda x: x[2], reverse=True)
-
-        # Remove the sort_time from the final result
-        final_data = [(rec[0], rec[1]) for rec in result_records]
-
-    session_count = len(all_sessions)
-    takeaway_count = len(all_takeaways)
-    return Result(True, final_data, f"Found {session_count} sessions and {takeaway_count} takeaways")
+    return Result(True, session_dicts, f"Found {len(all_sessions)} sessions")
 
 
 

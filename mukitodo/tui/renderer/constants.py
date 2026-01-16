@@ -39,7 +39,7 @@ LIST_MIN_TERMINAL_WIDTH = 40
 # For list views, clamp the content width so structure line formatting always has enough space.
 LIST_MIN_CONTENT_WIDTH = 20
 
-# Timeline: when a takeaway has no title, preview this many chars of its content.
+# Timeline: preview this many chars of session description.
 TIMELINE_TAKEAWAY_PREVIEW_CHARS = 30
 
 

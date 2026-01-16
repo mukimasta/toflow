@@ -62,7 +62,7 @@ class NowState:
 
         # == Session Tracking ==
         self._session_started_at: datetime | None = None  # For database persistence
-        self._last_saved_session_id: int | None = None  # For linking takeaways
+        self._last_saved_session_id: int | None = None  # For session follow-up (e.g. description)
 
 
     # ========== Item Context Management ==========
@@ -223,7 +223,7 @@ class NowState:
         return e
 
     def arm_break_after_finish(self, minutes: int = 5) -> None:
-        """Arm break idle after the time-up finish flow completes (takeaways done/cancelled)."""
+        """Arm break idle after the time-up finish flow completes."""
         try:
             m = int(minutes)
         except Exception:
@@ -309,27 +309,6 @@ class NowState:
 
         return result
 
-    def create_takeaway_for_session(self, content: str) -> Result:
-        """Create a takeaway linked to the last saved session."""
-        from datetime import date as date_type
-
-        if self._last_saved_session_id is None:
-            return Result(False, None, "No session to link takeaway to")
-
-        # Use todo_item_id or project_id as parent
-        result = actions.create_takeaway(
-            title=None,
-            content=content,
-            type="action",
-            date=date_type.today(),
-            project_id=self._current_project_id if self._current_todo_id is None else None,
-            todo_item_id=self._current_todo_id,
-            now_session_id=self._last_saved_session_id
-        )
-
-        return result
-
-
     # ========== Property Getters ==========
 
     @property
@@ -372,7 +351,7 @@ class NowState:
 
     @property
     def last_saved_session_id(self) -> int | None:
-        """Last persisted session id (used for linking takeaways)."""
+        """Last persisted session id."""
         return self._last_saved_session_id
 
     @property

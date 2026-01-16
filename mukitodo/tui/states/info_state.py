@@ -17,13 +17,12 @@ class InfoState:
         self._selected_field_idx: int = 0 # / cursor
         
         # Context saved when entering INFO view
-        self._item_type: str | None = None  # "track", "project", "todo", "idea", "session", "takeaway"
+        self._item_type: str | None = None  # "track", "project", "todo", "idea", "session"
 
         self._current_track_id: int | None = None
         self._current_project_id: int | None = None
         self._current_todo_id: int | None = None
         self._current_session_id: int | None = None
-        self._current_takeaway_id: int | None = None
         self._current_idea_id: int | None = None
 
         # For Renderer
@@ -41,7 +40,6 @@ class InfoState:
         self._current_project_id = project_id
         self._current_todo_id = todo_id
         self._current_session_id = None
-        self._current_takeaway_id = None
         self._current_idea_id = None
 
         self._load_field_dict()
@@ -57,7 +55,6 @@ class InfoState:
         self._current_project_id = None
         self._current_todo_id = None
         self._current_session_id = None
-        self._current_takeaway_id = None
         self._current_idea_id = None
 
         if item_type == "todo":
@@ -71,9 +68,9 @@ class InfoState:
         self._load_structure_names()
 
     def reload_info_panel_for_timeline(self, item_type: str, item_id: int) -> None:
-        """Enter INFO view for session or takeaway from Timeline view."""
+        """Enter INFO view for session from Timeline view."""
         self._selected_field_idx = 0
-        self._item_type = item_type  # "session" or "takeaway"
+        self._item_type = item_type  # "session"
         self._current_track_id = None
         self._current_project_id = None
         self._current_todo_id = None
@@ -81,10 +78,6 @@ class InfoState:
 
         if item_type == "session":
             self._current_session_id = item_id
-            self._current_takeaway_id = None
-        elif item_type == "takeaway":
-            self._current_session_id = None
-            self._current_takeaway_id = item_id
         else:
             raise ValueError(f"Invalid item type for timeline: {item_type}")
 
@@ -99,7 +92,6 @@ class InfoState:
         self._current_project_id = None
         self._current_todo_id = None
         self._current_session_id = None
-        self._current_takeaway_id = None
         self._current_idea_id = None
         self._current_track_name = None
         self._current_project_name = None
@@ -130,9 +122,6 @@ class InfoState:
         elif self._item_type == "session":
             assert self._current_session_id is not None
             result = actions.get_session(self._current_session_id)
-        elif self._item_type == "takeaway":
-            assert self._current_takeaway_id is not None
-            result = actions.get_takeaway_dict(self._current_takeaway_id)
         else:
             raise ValueError(f"Invalid item type: {self._item_type}")
 
@@ -184,10 +173,6 @@ class InfoState:
     @property
     def current_session_id(self) -> int | None:
         return self._current_session_id
-
-    @property
-    def current_takeaway_id(self) -> int | None:
-        return self._current_takeaway_id
 
     @property
     def current_track_name(self) -> str | None:

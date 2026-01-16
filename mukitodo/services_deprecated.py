@@ -3,7 +3,7 @@ from datetime import datetime, date as date_type, timezone
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from mukitodo.database import get_session, init_db
-from mukitodo.models import Track, Project, TodoItem, IdeaItem, NowSession, Takeaway
+from mukitodo.models import Track, Project, TodoItem, IdeaItem, NowSession
 
 
 # == TrackService ========================================================
@@ -585,106 +585,3 @@ class NowSessionService:
         return True
 
 
-# == TakeawayService ========================================================
-
-class TakeawayService:
-    def __init__(self):
-        init_db()
-        self.session = get_session()
-    
-    # == Basic CRUD ==
-    
-    def get_by_id(self, takeaway_id: int) -> Takeaway | None:
-        """Get a takeaway by id. Returns None if not found."""
-        return self.session.query(Takeaway).filter_by(id=takeaway_id).first()
-    
-    def add(
-        self,
-        title: str | None,
-        content: str,
-        type: str,
-        date: date_type,
-        track_id: int | None = None,
-        project_id: int | None = None,
-        todo_item_id: int | None = None,
-        now_session_id: int | None = None
-    ) -> Takeaway:
-        """Create a new takeaway. Raises DatabaseError on failure."""
-        takeaway = Takeaway(
-            title=title,
-            content=content,
-            type=type,
-            date=date,
-            track_id=track_id,
-            project_id=project_id,
-            todo_item_id=todo_item_id,
-            now_session_id=now_session_id
-        )
-        self.session.add(takeaway)
-        self.session.commit()
-        return takeaway
-    
-    def delete_by_id(self, takeaway_id: int) -> bool:
-        """Delete a takeaway by id. Returns False if not found."""
-        takeaway = self.session.query(Takeaway).filter_by(id=takeaway_id).first()
-        if not takeaway:
-            return False
-        self.session.delete(takeaway)
-        self.session.commit()
-        return True
-    
-    # == List Queries ==
-    
-    def list_by_track_id(self, track_id: int) -> list[Takeaway]:
-        """List all takeaways for a track."""
-        return self.session.query(Takeaway).filter_by(track_id=track_id).all()
-    
-    def list_by_project_id(self, project_id: int) -> list[Takeaway]:
-        """List all takeaways for a project."""
-        return self.session.query(Takeaway).filter_by(project_id=project_id).all()
-    
-    def list_by_todo_id(self, todo_id: int) -> list[Takeaway]:
-        """List all takeaways for a todo item."""
-        return self.session.query(Takeaway).filter_by(todo_item_id=todo_id).all()
-    
-    def list_by_session_id(self, session_id: int) -> list[Takeaway]:
-        """List all takeaways for a now session."""
-        return self.session.query(Takeaway).filter_by(now_session_id=session_id).all()
-    
-    # == Update Methods ==
-    
-    def update_title(self, takeaway_id: int, title: str) -> bool:
-        """Update takeaway title. Returns False if not found."""
-        takeaway = self.session.query(Takeaway).filter_by(id=takeaway_id).first()
-        if not takeaway:
-            return False
-        takeaway.title = title
-        self.session.commit()
-        return True
-    
-    def update_content(self, takeaway_id: int, content: str) -> bool:
-        """Update takeaway content. Returns False if not found."""
-        takeaway = self.session.query(Takeaway).filter_by(id=takeaway_id).first()
-        if not takeaway:
-            return False
-        takeaway.content = content
-        self.session.commit()
-        return True
-    
-    def update_type(self, takeaway_id: int, type: str) -> bool:
-        """Update takeaway type. Returns False if not found."""
-        takeaway = self.session.query(Takeaway).filter_by(id=takeaway_id).first()
-        if not takeaway:
-            return False
-        takeaway.type = type
-        self.session.commit()
-        return True
-    
-    def update_date(self, takeaway_id: int, date: date_type) -> bool:
-        """Update takeaway date. Returns False if not found."""
-        takeaway = self.session.query(Takeaway).filter_by(id=takeaway_id).first()
-        if not takeaway:
-            return False
-        takeaway.date = date
-        self.session.commit()
-        return True

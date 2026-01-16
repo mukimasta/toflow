@@ -1,6 +1,6 @@
 from pathlib import Path
 from contextlib import contextmanager
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
 DB_PATH = Path.home() / ".mukitodo" / "todo.db"
@@ -28,9 +28,10 @@ def init_db():
     global _db_initialized
     if _db_initialized:
         return
-    from mukitodo.models import Track, Project, TodoItem, IdeaItem, NowSession, Takeaway
+    from mukitodo.models import Track, Project, TodoItem, IdeaItem, NowSession
     engine = get_engine()
     Base.metadata.create_all(engine)
+
     _db_initialized = True
 
 

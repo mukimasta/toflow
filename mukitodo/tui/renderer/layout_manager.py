@@ -43,7 +43,6 @@ class LayoutManager:
             FormField.TITLE: Buffer(),
             FormField.CONTENT: Buffer(),
             FormField.DEADLINE: Buffer(),
-            FormField.DATE: Buffer(),
             FormField.START_AT: Buffer(),
         }
 
@@ -66,26 +65,23 @@ class LayoutManager:
         self._show_deadline = Condition(
             lambda: self._state.input_state.form_type in (FormType.PROJECT, FormType.STRUCTURE_TODO, FormType.BOX_TODO)
         )
-        self._show_date = Condition(lambda: self._state.input_state.form_type == FormType.TAKEAWAY)
         self._show_status = Condition(
             lambda: self._state.input_state.form_type
             in (FormType.TRACK, FormType.PROJECT, FormType.STRUCTURE_TODO, FormType.BOX_TODO, FormType.BOX_IDEA)
         )
         self._show_project_hints = Condition(lambda: self._state.input_state.form_type == FormType.PROJECT)
-        self._show_takeaway_type = Condition(lambda: self._state.input_state.form_type == FormType.TAKEAWAY)
         self._show_idea_hints = Condition(lambda: self._state.input_state.form_type == FormType.BOX_IDEA)
         self._show_todo_stages = Condition(lambda: self._state.input_state.form_type in (FormType.STRUCTURE_TODO, FormType.BOX_TODO))
         self._show_now_stage_update = Condition(lambda: self._state.input_state.form_type == FormType.NOW_STAGE_UPDATE)
 
         self._is_current_title = Condition(lambda: self._state.input_state.current_field == FormField.TITLE)
         self._is_current_deadline = Condition(lambda: self._state.input_state.current_field == FormField.DEADLINE)
-        self._is_current_date = Condition(lambda: self._state.input_state.current_field == FormField.DATE)
         self._is_current_content = Condition(lambda: self._state.input_state.current_field == FormField.CONTENT)
 
         # For NOW stage prompt, we only want to show the stage chip.
         self._show_text_fields = Condition(lambda: self._state.input_state.form_type != FormType.NOW_STAGE_UPDATE)
         self._show_deadline_and_text = self._show_text_fields & self._show_deadline
-        self._show_date_and_text = self._show_text_fields & self._show_date
+        self._show_date_and_text = Condition(lambda: False)
 
     # ==========================================================================
     # Public API
@@ -276,7 +272,7 @@ class LayoutManager:
         edit_window: Window,
         display_window: Window,
         is_current: Condition,
-        show: Condition | None = None,
+        show: Any | None = None,
     ):
         slot = VSplit(
             [
@@ -296,7 +292,6 @@ class LayoutManager:
         title_buffer_control = BufferControl(buffer=self.field_buffers[FormField.TITLE])
         content_buffer_control = BufferControl(buffer=self.field_buffers[FormField.CONTENT])
         deadline_buffer_control = BufferControl(buffer=self.field_buffers[FormField.DEADLINE])
-        date_buffer_control = BufferControl(buffer=self.field_buffers[FormField.DATE])
 
         title_edit_window = Window(
             content=title_buffer_control,
@@ -324,19 +319,6 @@ class LayoutManager:
             wrap_lines=False,
         )
 
-        date_edit_window = Window(
-            content=date_buffer_control,
-            height=1,
-            width=Dimension(preferred=constants.INPUT_DATE_WIDTH, max=constants.INPUT_DATE_WIDTH),
-            wrap_lines=False,
-        )
-        date_display_window = Window(
-            content=FormattedTextControl(lambda: self._renderer.render_input_text_value(FormField.DATE)),
-            height=1,
-            width=Dimension(preferred=constants.INPUT_DATE_WIDTH, max=constants.INPUT_DATE_WIDTH),
-            wrap_lines=False,
-        )
-
         content_edit_window = Window(
             content=content_buffer_control,
             height=1,
@@ -353,11 +335,6 @@ class LayoutManager:
         # Non-text chip controls
         status_window = Window(
             content=FormattedTextControl(lambda: self._renderer.render_input_chip(FormField.STATUS, "Status")),
-            height=1,
-            wrap_lines=False,
-        )
-        type_window = Window(
-            content=FormattedTextControl(lambda: self._renderer.render_input_chip(FormField.TYPE, "Type")),
             height=1,
             wrap_lines=False,
         )
@@ -398,10 +375,8 @@ class LayoutManager:
             {
                 FormField.TITLE: title_buffer_control,
                 FormField.DEADLINE: deadline_buffer_control,
-                FormField.DATE: date_buffer_control,
                 FormField.CONTENT: content_buffer_control,
                 FormField.STATUS: status_window,
-                FormField.TYPE: type_window,
                 FormField.MATURITY_HINT: maturity_window,
                 FormField.WILLINGNESS_HINT: willingness_window,
                 FormField.IMPORTANCE_HINT: importance_window,
@@ -442,15 +417,6 @@ class LayoutManager:
                     is_current=self._is_current_deadline,
                     show=self._show_deadline_and_text,
                 ),
-                self._build_text_field_slot(
-                    field=FormField.DATE,
-                    label="Date:",
-                    label_width=5,
-                    edit_window=date_edit_window,
-                    display_window=date_display_window,
-                    is_current=self._is_current_date,
-                    show=self._show_date_and_text,
-                ),
             ],
             height=1,
         )
@@ -472,8 +438,6 @@ class LayoutManager:
                 ConditionalContainer(Window(width=1), filter=self._show_project_hints),
                 ConditionalContainer(maturity_window, filter=self._show_idea_hints),
                 ConditionalContainer(Window(width=1), filter=self._show_idea_hints),
-                ConditionalContainer(type_window, filter=self._show_takeaway_type),
-                ConditionalContainer(Window(width=1), filter=self._show_takeaway_type),
                 self._build_text_field_slot(
                     field=FormField.CONTENT,
                     label="Content:",

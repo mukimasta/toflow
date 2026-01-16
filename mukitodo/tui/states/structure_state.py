@@ -203,6 +203,53 @@ class StructureState:
 
     # Data Manipulation
 
+    def move_selected_item_order(self, direction: int) -> None:
+        """
+        Alt+↑/↓: Move selected item by swapping order_index with neighbor.
+
+        Sorting source of truth is order_index (0..n-1). After move we reload lists
+        and re-focus by id to keep cursor on the moved item.
+        """
+        if direction not in (-1, 1):
+            self._message.set(Result(False, None, "direction must be -1 or +1"))
+            return
+
+        # Tracks (global scope)
+        if self._structure_level in (StructureLevel.TRACKS, StructureLevel.TRACKS_WITH_PROJECTS_T):
+            if self._selected_track_idx is None or not self._current_tracks_list:
+                self._message.set(Result(False, None, "No track selected"))
+                return
+            track_id = int(self._current_tracks_list[self._selected_track_idx]["id"])
+            result = actions.move_track_order(track_id, direction)
+            if result.success:
+                self.focus_track_by_id(track_id)
+            self._message.set(result)
+            return
+
+        # Projects (within current track)
+        if self._structure_level == StructureLevel.TRACKS_WITH_PROJECTS_P:
+            if self._selected_project_idx is None or not self._current_projects_list:
+                self._message.set(Result(False, None, "No project selected"))
+                return
+            project_id = int(self._current_projects_list[self._selected_project_idx]["id"])
+            result = actions.move_project_order(project_id, direction)
+            if result.success:
+                self.focus_project_by_id(project_id, enter_project_level=True)
+            self._message.set(result)
+            return
+
+        # Todos (within current project)
+        if self._structure_level == StructureLevel.TODOS:
+            if self._selected_todo_idx is None or not self._current_todos_list:
+                self._message.set(Result(False, None, "No todo selected"))
+                return
+            todo_id = int(self._current_todos_list[self._selected_todo_idx]["id"])
+            result = actions.move_todo_order(todo_id, direction)
+            if result.success:
+                self.focus_todo_by_id(todo_id)
+            self._message.set(result)
+            return
+
     def toggle_selected_item(self) -> None:
         """
         Toggle item status with Space key.
@@ -343,28 +390,25 @@ class StructureState:
             self.load_current_lists()
             self._message.set(result)
 
-    def focus_selected_item(self) -> None:
-        """
-        Focus selected item with 'f' key (focusing ↔ active toggle).
-        Only works for Project at TRACKS_WITH_PROJECTS_P level.
-        """
-        if self._structure_level != StructureLevel.TRACKS_WITH_PROJECTS_P:
+    def toggle_pin_selected_item(self) -> None:
+        """Toggle pinned state for selected Project/Todo."""
+        if self._structure_level == StructureLevel.TRACKS_WITH_PROJECTS_P:
+            project = self.current_project_dict
+            if not project:
+                return
+            result = actions.toggle_project_pinned(self._current_project_id)  # type: ignore
+            self.load_current_lists()
+            self._message.set(result)
             return
 
-        project = self.current_project_dict
-        if not project:
+        if self._structure_level == StructureLevel.TODOS:
+            todo = self.current_todo_dict
+            if not todo:
+                return
+            result = actions.toggle_todo_pinned(self._current_todo_id)  # type: ignore
+            self.load_current_lists()
+            self._message.set(result)
             return
-
-        current_status = project.get("status", "active")
-
-        # Toggle: focusing ↔ active
-        if current_status == "focusing":
-            result = actions.activate_project(self._current_project_id) # type: ignore
-        else:
-            result = actions.focus_project(self._current_project_id) # type: ignore
-
-        self.load_current_lists()
-        self._message.set(result)
 
     def delete_selected_item(self, ask_confirm: bool = False) -> None:
         """Delete the current item (track, project, or todo)."""

@@ -5,6 +5,16 @@ build/
 dist/
 wheels/
 *.egg-info
+.pytest_cache/
 
 # Virtual environments
 .venv
+.uv-cache
+
+# IDEs
+.vscode/
+.cursor/
+
+
+# Other
+scripts/

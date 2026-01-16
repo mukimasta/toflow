@@ -76,7 +76,6 @@ class Renderer:
                 "track.active": "",
                 "track.sleeping": "ansibrightblack",
                 # Project status styles
-                "project.focusing": "bold",
                 "project.active": "",
                 "project.sleeping": "ansibrightblack",
                 "project.finished": "ansibrightblack",
@@ -241,7 +240,7 @@ class Renderer:
             elif structure_level == StructureLevel.TODOS:
                 parts.extend(["[←] back", "[Enter] add to NOW", "[Space] toggle", "[i] detail"])
 
-            parts.extend(["[=/+] add", "[Backspace] delete"])
+            parts.extend(["[=/+] add", "[p] pin", "[Backspace] delete"])
             parts.extend(["[Tab] NOW", "[' ] timeline", "[i] info", "[q] quit"])
 
             return [("class:dim", "  " + "  ".join(parts))]
@@ -266,7 +265,7 @@ class Renderer:
             return [("class:dim", "  " + "  ".join(parts))]
 
         if self.state.view == View.TIMELINE:
-            parts = ["[↑↓] move", "[i] detail", "[=/+] new takeaway", "[r] edit", "[Backspace] delete", "['/Esc/q] exit"]
+            parts = ["[↑↓] move", "[i] detail", "[Backspace] delete", "['/Esc/q] exit"]
             return [("class:dim", "  " + "  ".join(parts))]
 
         # Default fallback
@@ -378,10 +377,6 @@ class Renderer:
             bar = str(value or "▁")
             return [(style, f"[M {bar}]")]
 
-        if field == FormField.TYPE:
-            t = str(value or "action").replace("_", " ").title()
-            return [(style, f"[{t}]")]
-
         if label:
             return [(style, f"[{label}:{value}]")]
         return [(style, f"[{value}]")]
@@ -389,7 +384,6 @@ class Renderer:
     # == Structure Line Formatting ======================================
 
     _STATUS_ICON_MAP = {
-        "focusing": "⎈",
         "active": "○",
         "sleeping": "z",
         "finished": "◉",
@@ -559,12 +553,9 @@ class Renderer:
 
         tui = item.get("_tui") or {}
         session_count = int(tui.get("session_count") or 0)
-        takeaway_count = int(tui.get("takeaway_count") or 0)
         if item_type in ("project", "todo"):
             if session_count > 0:
                 flags.append(f"[⧗{session_count}]")
-            if takeaway_count > 0:
-                flags.append(f"[✎{takeaway_count}]")
         return flags
 
     def _structure_line_segments(
@@ -583,7 +574,10 @@ class Renderer:
         base_style = self._get_item_style(item, item_type, is_selected)
 
         status = item.get("status", "active")
-        icon = self._STATUS_ICON_MAP.get(status, "○")
+        if item_type in ("project", "todo") and bool(item.get("pinned")):
+            icon = "✜"
+        else:
+            icon = self._STATUS_ICON_MAP.get(status, "○")
 
         left = f"{icon} {item_type.capitalize()} {index_1based}: {item.get('name','')}"
 

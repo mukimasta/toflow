@@ -22,18 +22,15 @@ class FormType(Enum):
     BOX_TODO = "box_todo"
     BOX_IDEA = "box_idea"
     NOW_STAGE_UPDATE = "now_stage_update"
-    # SESSION = "session"
-    TAKEAWAY = "takeaway"
+    SESSION_DESCRIPTION = "session_description"
 
 class FormField(Enum):
     """Editable field of the input by sequence."""
     # Line 1
-    TITLE = ("title", set([FormType.TRACK, FormType.PROJECT, FormType.STRUCTURE_TODO, FormType.BOX_TODO, FormType.BOX_IDEA, FormType.TAKEAWAY])) # name/title
+    TITLE = ("title", set([FormType.TRACK, FormType.PROJECT, FormType.STRUCTURE_TODO, FormType.BOX_TODO, FormType.BOX_IDEA])) # name/title
     START_AT = ("start_at", set([FormType.PROJECT]))
     DEADLINE = ("deadline", set([FormType.PROJECT, FormType.STRUCTURE_TODO, FormType.BOX_TODO]))
-    DATE = ("date", set([FormType.TAKEAWAY]))
     # Line 2
-    TYPE = ("type", set([FormType.TAKEAWAY]))
     STATUS = ("status", set([FormType.TRACK, FormType.PROJECT, FormType.STRUCTURE_TODO, FormType.BOX_TODO, FormType.BOX_IDEA]))
     TOTAL_STAGES = ("total_stages", set([FormType.STRUCTURE_TODO, FormType.BOX_TODO]))
     CURRENT_STAGE = ("current_stage", set([FormType.STRUCTURE_TODO, FormType.BOX_TODO]))
@@ -42,7 +39,7 @@ class FormField(Enum):
     WILLINGNESS_HINT = ("willingness_hint", set([FormType.PROJECT, FormType.BOX_IDEA]))
     IMPORTANCE_HINT = ("importance_hint", set([FormType.PROJECT]))
     URGENCY_HINT = ("urgency_hint", set([FormType.PROJECT]))
-    CONTENT = ("content", set([FormType.TRACK, FormType.PROJECT, FormType.STRUCTURE_TODO, FormType.BOX_TODO, FormType.BOX_IDEA, FormType.TAKEAWAY])) # content/description/url
+    CONTENT = ("content", set([FormType.TRACK, FormType.PROJECT, FormType.STRUCTURE_TODO, FormType.BOX_TODO, FormType.BOX_IDEA, FormType.SESSION_DESCRIPTION])) # content/description/url
     
 
 
@@ -155,11 +152,6 @@ class InputState:
         if self.is_text_field(self._current_field):
             return
 
-        if self._current_field == FormField.TYPE:
-            current = str(self._field_dict.get(self._current_field) or "action")
-            self._field_dict[self._current_field] = self._toggle_takeaway_type(current)
-            return
-
         if self._current_field == FormField.STATUS:
             new_status = self._cycle_status(direction)
             self._field_dict[self._current_field] = new_status
@@ -244,7 +236,7 @@ class InputState:
             return
         if field in (FormField.TITLE, FormField.CONTENT):
             self._field_dict[field] = new_value
-        elif field in (FormField.DEADLINE, FormField.DATE, FormField.START_AT):
+        elif field in (FormField.DEADLINE, FormField.START_AT):
             self._field_dict[field] = new_value.strip()
         else:
             # Non-text fields should not be set by raw string in v1.
@@ -301,9 +293,7 @@ class InputState:
                 2: "▅",
                 3: "█",
             }[n]
-        if field == FormField.TYPE:
-            return str(self._field_dict.get(field) or "action")
-        if field in (FormField.DEADLINE, FormField.DATE, FormField.START_AT):
+        if field in (FormField.DEADLINE, FormField.START_AT):
             return self.get_field_str(field) or "-"
         return self.get_field_str(field)
 
@@ -338,14 +328,14 @@ class InputState:
             ]
         if self._form_type == FormType.BOX_IDEA:
             return [FormField.TITLE, FormField.STATUS, FormField.MATURITY_HINT, FormField.WILLINGNESS_HINT, FormField.CONTENT]
-        if self._form_type == FormType.TAKEAWAY:
-            return [FormField.TITLE, FormField.DATE, FormField.TYPE, FormField.CONTENT]
+        if self._form_type == FormType.SESSION_DESCRIPTION:
+            return [FormField.CONTENT]
         if self._form_type == FormType.NOW_STAGE_UPDATE:
             return [FormField.STAGES_DONE]
         return []
 
     def is_text_field(self, field: FormField) -> bool:
-        return field in (FormField.TITLE, FormField.CONTENT, FormField.DEADLINE, FormField.DATE, FormField.START_AT)
+        return field in (FormField.TITLE, FormField.CONTENT, FormField.DEADLINE, FormField.START_AT)
 
     @property
     def is_active(self) -> bool:
@@ -383,17 +373,6 @@ class InputState:
     def context_todo_item_id(self) -> int | None:
         return self._context_todo_item_id
 
-    def reset_for_next_takeaway(self) -> None:
-        """Keep takeaway context/type/date, clear title/content, and focus title."""
-        if self._form_type != FormType.TAKEAWAY or self._input_purpose != InputPurpose.ADD:
-            return
-
-        # Keep TYPE/DATE (user may want to keep them), clear TITLE/CONTENT.
-        self._field_dict[FormField.TITLE] = ""
-        self._field_dict[FormField.CONTENT] = ""
-        self._original_field_dict = dict(self._field_dict)
-        self._current_field = FormField.TITLE
-
     # == Load/Defaults ==========================================================
 
     def _ensure_default_field_values(self) -> None:
@@ -406,7 +385,7 @@ class InputState:
                 self._field_dict[field] = ""
             elif field == FormField.CONTENT:
                 self._field_dict[field] = ""
-            elif field in (FormField.DEADLINE, FormField.DATE, FormField.START_AT):
+            elif field in (FormField.DEADLINE, FormField.START_AT):
                 self._field_dict[field] = ""
             elif field == FormField.STATUS:
                 self._field_dict[field] = "active"
@@ -417,8 +396,6 @@ class InputState:
             elif field == FormField.STAGES_DONE:
                 # Default to 1 stage completed in the session.
                 self._field_dict[field] = 1
-            elif field == FormField.TYPE:
-                self._field_dict[field] = "action"
             elif field in (FormField.MATURITY_HINT, FormField.WILLINGNESS_HINT, FormField.IMPORTANCE_HINT, FormField.URGENCY_HINT):
                 self._field_dict[field] = None
 
@@ -472,17 +449,12 @@ class InputState:
                 FormField.WILLINGNESS_HINT: result.data.get("willingness_hint"),
                 FormField.CONTENT: result.data.get("description") or "",
             }
-        elif form_type == FormType.TAKEAWAY:
-            result = actions.get_takeaway_dict(current_item_id)
+        elif form_type == FormType.SESSION_DESCRIPTION:
+            result = actions.get_session(current_item_id)
             if not result.success:
-                raise ValueError(f"[Action Error] Failed to get takeaway dict: {result.message}")
-            takeaway_date = result.data.get("date")
-            date_str = takeaway_date.strftime("%Y-%m-%d") if isinstance(takeaway_date, date_type) else ""
+                raise ValueError(f"[Action Error] Failed to get session: {result.message}")
             field_dict = {
-                FormField.TITLE: result.data.get("title") or "",
-                FormField.TYPE: result.data.get("type") or "action",
-                FormField.DATE: date_str,
-                FormField.CONTENT: result.data.get("content") or "",
+                FormField.CONTENT: result.data.get("description") or "",
             }
         elif form_type == FormType.NOW_STAGE_UPDATE:
             # current_item_id is todo_id
@@ -508,17 +480,6 @@ class InputState:
         self._original_field_dict = dict(field_dict)
 
 
-    # == Helper Functions =====================================================
-
-    def _toggle_takeaway_type(self, type: str) -> str:
-        """Toggle the takeaway type."""
-        if type == "insight":
-            return "action"
-        elif type == "action":
-            return "insight"
-        else:
-            raise ValueError(f"Invalid takeaway type: {type}")
-
     def _cycle_status(self, direction: int | None) -> str:
         if self._form_type is None:
             return "active"
@@ -526,7 +487,7 @@ class InputState:
         if self._form_type == FormType.TRACK:
             options = ["active", "sleeping"]
         elif self._form_type == FormType.PROJECT:
-            options = ["focusing", "active", "sleeping", "finished", "cancelled"]
+            options = ["active", "sleeping", "finished", "cancelled"]
         elif self._form_type in (FormType.STRUCTURE_TODO, FormType.BOX_TODO):
             options = ["active", "sleeping", "done", "cancelled"]
         elif self._form_type == FormType.BOX_IDEA:
@@ -634,43 +595,12 @@ class InputState:
             )
             created_id = result.data if result.success else None
 
-        elif self._form_type == FormType.TAKEAWAY:
-            takeaway_type = str(self._field_dict.get(FormField.TYPE) or "action")
-            takeaway_date = self._parse_date_yyyy_mm_dd(self.get_field_str(FormField.DATE)) or date_type.today()
-            raw_title = self.get_field_str(FormField.TITLE).strip()
-            takeaway_title = raw_title or None
-            # New rule: if content is empty, auto use title as content.
-            if not content and raw_title:
-                content = raw_title
-            if self._context_todo_item_id is not None:
-                result = actions.create_takeaway(
-                    title=takeaway_title,
-                    content=content,
-                    type=takeaway_type,
-                    date=takeaway_date,
-                    todo_item_id=self._context_todo_item_id,
-                    now_session_id=self._context_now_session_id,
-                )
-            elif self._context_project_id is not None:
-                result = actions.create_takeaway(
-                    title=takeaway_title,
-                    content=content,
-                    type=takeaway_type,
-                    date=takeaway_date,
-                    project_id=self._context_project_id,
-                    now_session_id=self._context_now_session_id,
-                )
-            elif self._context_track_id is not None:
-                result = actions.create_takeaway(
-                    title=takeaway_title,
-                    content=content,
-                    type=takeaway_type,
-                    date=takeaway_date,
-                    track_id=self._context_track_id,
-                )
-            else:
-                return Result(False, None, "No parent selected for new takeaway")
-            created_id = result.data if result.success else None
+        elif self._form_type == FormType.SESSION_DESCRIPTION:
+            session_id = self._context_now_session_id or self._current_item_id
+            if session_id is None:
+                return Result(False, None, "No session selected for description")
+            result = actions.update_session_description(session_id, content or None)
+            created_id = session_id if result.success else None
 
         elif self._form_type == FormType.NOW_STAGE_UPDATE:
             if self._current_item_id is None:
@@ -837,28 +767,9 @@ class InputState:
                 if not r.success:
                     return r
 
-        elif self._form_type == FormType.TAKEAWAY:
-            new_date = self.get_field_str(FormField.DATE).strip()
-            old_date = str(self._original_field_dict.get(FormField.DATE) or "").strip()
-            if new_title and new_title != old_title:
-                r = apply(actions.update_takeaway_title(item_id, new_title))
-                if not r.success:
-                    return r
+        elif self._form_type == FormType.SESSION_DESCRIPTION:
             if new_content != old_content:
-                r = apply(actions.update_takeaway_content(item_id, new_content))
-                if not r.success:
-                    return r
-            new_type = str(self._field_dict.get(FormField.TYPE) or "action")
-            old_type = str(self._original_field_dict.get(FormField.TYPE) or "action")
-            if new_type != old_type:
-                r = apply(actions.update_takeaway_type(item_id, new_type))
-                if not r.success:
-                    return r
-            if new_date != old_date:
-                parsed = self._parse_date_yyyy_mm_dd(new_date)
-                if parsed is None:
-                    return Result(False, None, "Invalid date format (expected YYYY-MM-DD)")
-                r = apply(actions.update_takeaway_date(item_id, parsed))
+                r = apply(actions.update_session_description(item_id, new_content or None))
                 if not r.success:
                     return r
 
@@ -881,8 +792,6 @@ class InputState:
         if form_type == FormType.PROJECT:
             if status == "active":
                 return actions.activate_project(item_id)
-            if status == "focusing":
-                return actions.focus_project(item_id)
             if status == "sleeping":
                 return actions.sleep_project(item_id)
             if status == "cancelled":

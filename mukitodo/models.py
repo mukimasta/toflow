@@ -1,5 +1,5 @@
-from datetime import datetime, date as date_type, timezone
-from sqlalchemy import String, ForeignKey, Date, DateTime, Boolean, Integer, Text, CheckConstraint, func
+from datetime import datetime, timezone
+from sqlalchemy import String, ForeignKey, DateTime, Boolean, Integer, Text, CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from mukitodo.database import Base
 
@@ -22,6 +22,14 @@ class Track(Base):
     archived_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     order_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    @staticmethod
+    def _as_utc_aware(dt: datetime | None) -> datetime | None:
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt
+
     def to_dict(self, local_timezone = None) -> dict:
         '''Convert track to dict. local_timezone: timezone for the time properties'''
         local_timezone = local_timezone or datetime.now().astimezone().tzinfo
@@ -31,8 +39,8 @@ class Track(Base):
             "description": self.description,
             "status": self.status,
             "archived": self.archived,
-            "created_at_utc": self.created_at_utc,
-            "archived_at_utc": self.archived_at_utc,
+            "created_at_utc": self._as_utc_aware(self.created_at_utc),
+            "archived_at_utc": self._as_utc_aware(self.archived_at_utc),
             # "created_at_local": self.created_at_utc.astimezone(local_timezone),
             # "archived_at_local": self.archived_at_utc.astimezone(local_timezone) if self.archived_at_utc else None,
             "order_index": self.order_index
@@ -46,6 +54,10 @@ class Project(Base):
             "(archived = false AND archived_at_utc IS NULL) OR (archived = true AND archived_at_utc IS NOT NULL)",
             name="project_archived_consistency"
         ),
+        CheckConstraint(
+            "(pinned = false) OR (status = 'active')",
+            name="project_pinned_requires_active"
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -57,6 +69,7 @@ class Project(Base):
     importance_hint: Mapped[int | None] = mapped_column(Integer, nullable=True)
     urgency_hint: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     started_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -67,22 +80,24 @@ class Project(Base):
     def to_dict(self, local_timezone = None) -> dict:
         '''Convert project to dict. local_timezone: timezone for the time properties'''
         local_timezone = local_timezone or datetime.now().astimezone().tzinfo
+        deadline_utc = Track._as_utc_aware(self.deadline_utc)
         return {
             "id": self.id,
             "track_id": self.track_id,
             "name": self.name,
             "description": self.description,
-            "deadline_utc": self.deadline_utc,
-            "deadline_local": self.deadline_utc.astimezone(local_timezone) if self.deadline_utc else None,
+            "deadline_utc": deadline_utc,
+            "deadline_local": deadline_utc.astimezone(local_timezone) if deadline_utc else None,
             "willingness_hint": self.willingness_hint,
             "importance_hint": self.importance_hint,
             "urgency_hint": self.urgency_hint,
             "status": self.status,
+            "pinned": self.pinned,
             "archived": self.archived,
-            "created_at_utc": self.created_at_utc,
-            "started_at_utc": self.started_at_utc,
-            "finished_at_utc": self.finished_at_utc,
-            "archived_at_utc": self.archived_at_utc,
+            "created_at_utc": Track._as_utc_aware(self.created_at_utc),
+            "started_at_utc": Track._as_utc_aware(self.started_at_utc),
+            "finished_at_utc": Track._as_utc_aware(self.finished_at_utc),
+            "archived_at_utc": Track._as_utc_aware(self.archived_at_utc),
             # "created_at_local": self.created_at_utc.astimezone(local_timezone),
             # "started_at_local": self.started_at_utc.astimezone(local_timezone) if self.started_at_utc else None,
             # "finished_at_local": self.finished_at_utc.astimezone(local_timezone) if self.finished_at_utc else None,
@@ -110,6 +125,10 @@ class TodoItem(Base):
             "current_stage >= 0 AND current_stage <= total_stages",
             name="todo_item_stage_range",
         ),
+        CheckConstraint(
+            "(pinned = false) OR (status = 'active')",
+            name="todo_item_pinned_requires_active"
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -121,6 +140,7 @@ class TodoItem(Base):
     status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
     total_stages: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     current_stage: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     completed_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -130,21 +150,23 @@ class TodoItem(Base):
     def to_dict(self, local_timezone = None) -> dict:
         '''Convert todo item to dict. local_timezone: timezone for the time properties'''
         local_timezone = local_timezone or datetime.now().astimezone().tzinfo
+        deadline_utc = Track._as_utc_aware(self.deadline_utc)
         return {
             "id": self.id,
             "project_id": self.project_id,
             "name": self.name,
             "description": self.description,
             "url": self.url,
-            "deadline_utc": self.deadline_utc,
-            "deadline_local": self.deadline_utc.astimezone(local_timezone) if self.deadline_utc else None,
+            "deadline_utc": deadline_utc,
+            "deadline_local": deadline_utc.astimezone(local_timezone) if deadline_utc else None,
             "status": self.status,
             "total_stages": self.total_stages,
             "current_stage": self.current_stage,
+            "pinned": self.pinned,
             "archived": self.archived,
-            "created_at_utc": self.created_at_utc,
-            "completed_at_utc": self.completed_at_utc,
-            "archived_at_utc": self.archived_at_utc,
+            "created_at_utc": Track._as_utc_aware(self.created_at_utc),
+            "completed_at_utc": Track._as_utc_aware(self.completed_at_utc),
+            "archived_at_utc": Track._as_utc_aware(self.archived_at_utc),
             # "created_at_local": self.created_at_utc.astimezone(local_timezone),
             # "completed_at_local": self.completed_at_utc.astimezone(local_timezone) if self.completed_at_utc else None,
             # "archived_at_local": self.archived_at_utc.astimezone(local_timezone) if self.archived_at_utc else None,
@@ -189,9 +211,9 @@ class IdeaItem(Base):
             "willingness_hint": self.willingness_hint,
             "status": self.status,
             "archived": self.archived,
-            "created_at_utc": self.created_at_utc,
-            "archived_at_utc": self.archived_at_utc,
-            "promoted_at_utc": self.promoted_at_utc,
+            "created_at_utc": Track._as_utc_aware(self.created_at_utc),
+            "archived_at_utc": Track._as_utc_aware(self.archived_at_utc),
+            "promoted_at_utc": Track._as_utc_aware(self.promoted_at_utc),
             "promoted_to_project_id": self.promoted_to_project_id,
             # "created_at_local": self.created_at_utc.astimezone(local_timezone),
             # "archived_at_local": self.archived_at_utc.astimezone(local_timezone) if self.archived_at_utc else None,
@@ -226,40 +248,8 @@ class NowSession(Base):
             "project_id": self.project_id,
             "todo_item_id": self.todo_item_id,
             "duration_minutes": self.duration_minutes,
-            "started_at_utc": self.started_at_utc,
-            "ended_at_utc": self.ended_at_utc,
+            "started_at_utc": Track._as_utc_aware(self.started_at_utc),
+            "ended_at_utc": Track._as_utc_aware(self.ended_at_utc),
             # "started_at_local": self.started_at_utc.astimezone(local_timezone),
             # "ended_at_local": self.ended_at_utc.astimezone(local_timezone) if self.ended_at_utc else None
-        }
-
-
-class Takeaway(Base):
-    __tablename__ = "takeaways"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    title: Mapped[str] = mapped_column(String(200), nullable=False)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    type: Mapped[str] = mapped_column(String(20), nullable=False)
-    date: Mapped[date_type] = mapped_column(Date, nullable=False)
-    created_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
-    track_id: Mapped[int | None] = mapped_column(ForeignKey("tracks.id"), nullable=True)
-    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
-    todo_item_id: Mapped[int | None] = mapped_column(ForeignKey("todo_items.id"), nullable=True)
-    now_session_id: Mapped[int | None] = mapped_column(ForeignKey("now_sessions.id"), nullable=True)
-
-    def to_dict(self, local_timezone = None) -> dict:
-        '''Convert takeaway to dict. local_timezone: timezone for the time properties'''
-        local_timezone = local_timezone or datetime.now().astimezone().tzinfo
-        return {
-            "id": self.id,
-            "title": self.title,
-            "content": self.content,
-            "type": self.type,
-            "date": self.date,
-            "created_at_utc": self.created_at_utc,
-            # "created_at_local": self.created_at_utc.astimezone(local_timezone),
-            "track_id": self.track_id,
-            "project_id": self.project_id,
-            "todo_item_id": self.todo_item_id,
-            "now_session_id": self.now_session_id
         }

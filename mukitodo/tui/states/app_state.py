@@ -358,14 +358,12 @@ class AppState:
             self._info_state.reload_info_panel_for_box(item_type, item_id)
             return
         elif self._view == View.TIMELINE:
-            # For Timeline view, get the selected item (session or takeaway)
+            # For Timeline view, get the selected session
             item_info = self._timeline_state.get_selected_item_id()
             if item_info is None:
                 self._message.set(Result(False, None, "No item selected"))
                 return
             item_type, item_id = item_info
-            # For session/takeaway, we pass the item_id as the relevant ID
-            # Info view needs to handle session and takeaway types
             self._set_view(View.INFO)
             self._info_state.reload_info_panel_for_timeline(item_type, item_id)
             return
@@ -484,7 +482,7 @@ class AppState:
         self._message.set(Result(True, None, f"Entered NOW with {item_type}"))
 
     def finish_session(self) -> None:
-        """Finish current NOW session: save to database, update todo stages (if any), then enter takeaway input mode."""
+        """Finish current NOW session: save to database, update todo stages (if any), then record session description."""
         # Save session to database
         result = self._now_state.save_session()
         if not result.success:
@@ -496,13 +494,13 @@ class AppState:
         if self._now_state.work_timeup_latched:
             self._now_state.arm_break_after_finish(5)
 
-        # Enter INPUT mode for stage update / takeaway creation
+        # Enter INPUT mode for stage update / session description
         session_id = self._now_state.last_saved_session_id
         if session_id is None:
-            self._message.set(Result(False, None, "Failed to link takeaways: no session id"))
+            self._message.set(Result(False, None, "Failed to save session: no session id"))
             return
 
-        # If this session is on a Todo, first ask how many stages were completed, then proceed to takeaways.
+        # If this session is on a Todo, first ask how many stages were completed, then proceed to session description.
         if self._now_state.current_todo_id is not None:
             self._ui_mode = UIMode.INPUT
             self._input_state.set_input_context(
@@ -517,18 +515,18 @@ class AppState:
             self._message.set(Result(True, None, "Session saved. How many stages completed?"))
             return
 
-        # Otherwise: project-level session → enter takeaway capture directly.
+        # Otherwise: project-level session → enter session description directly.
         self._ui_mode = UIMode.INPUT
         self._input_state.set_input_context(
             input_purpose=InputPurpose.ADD,
-            form_type=FormType.TAKEAWAY,
-            current_item_id=None,
+            form_type=FormType.SESSION_DESCRIPTION,
+            current_item_id=session_id,
             context_track_id=None,
             context_project_id=self._now_state.current_project_id if self._now_state.current_todo_id is None else None,
             context_todo_item_id=self._now_state.current_todo_id,
             context_now_session_id=session_id,
         )
-        self._message.set(Result(True, None, "Session saved. Add takeaways"))
+        self._message.set(Result(True, None, "Session saved. Add session description"))
 
     # == UI State / Mode Management =============================================
 
@@ -606,26 +604,8 @@ class AppState:
             return
 
         elif self._view == View.TIMELINE:
-            if input_purpose == InputPurpose.ADD:
-                form_type = FormType.TAKEAWAY
-                parent_session = self._timeline_state.get_parent_session_for_selected()
-                if parent_session is None:
-                    self._message.set(Result(False, None, "No session to link takeaway to"))
-                    return
-                context_now_session_id = parent_session.get("id")
-                context_project_id = parent_session.get("project_id")
-                context_todo_item_id = parent_session.get("todo_item_id")
-            else:  # EDIT
-                item_info = self._timeline_state.get_selected_item_id()
-                if item_info is None:
-                    self._message.set(Result(False, None, "No item selected"))
-                    return
-                item_type, item_id = item_info
-                if item_type != "takeaway":
-                    self._message.set(Result(False, None, "Only takeaway can be edited in form input"))
-                    return
-                form_type = FormType.TAKEAWAY
-                current_item_id = item_id
+            self._message.set(Result(False, None, "Input mode is not available in TIMELINE view"))
+            return
 
         elif self._view == View.ARCHIVE:
             # v1: no form input entry from ARCHIVE (only unarchive/delete/info)
@@ -651,10 +631,6 @@ class AppState:
             if form_type == FormType.STRUCTURE_TODO and context_project_id is None:
                 self._message.set(Result(False, None, "No project selected for new todo"))
                 return
-            if form_type == FormType.TAKEAWAY and (context_project_id is None and context_todo_item_id is None and context_track_id is None):
-                # v1: takeaway must be linked to a parent (timeline session provides project/todo); track-level takeaways can be added later.
-                self._message.set(Result(False, None, "No parent selected for new takeaway"))
-                return
 
         self._ui_mode = UIMode.INPUT
         self._input_state.set_input_context(
@@ -669,26 +645,25 @@ class AppState:
         
     def cancel_input(self) -> None:
         """Cancel INPUT mode and return to NORMAL mode."""
-        # Special: leaving NOW stage update should still allow takeaway capture.
+        # Special: leaving NOW stage update should still allow recording session description.
         if self._view == View.NOW and self._input_state.form_type == FormType.NOW_STAGE_UPDATE and self._input_state.context_now_session_id is not None:
-            # Skip stage update, proceed to takeaways.
             session_id = self._input_state.context_now_session_id
             self._ui_mode = UIMode.INPUT
             self._input_state.set_input_context(
                 input_purpose=InputPurpose.ADD,
-                form_type=FormType.TAKEAWAY,
-                current_item_id=None,
+                form_type=FormType.SESSION_DESCRIPTION,
+                current_item_id=session_id,
                 context_track_id=None,
                 context_project_id=self._now_state.current_project_id if self._now_state.current_todo_id is None else None,
                 context_todo_item_id=self._now_state.current_todo_id,
                 context_now_session_id=session_id,
             )
-            self._message.set(Result(True, None, "Add takeaways"))
+            self._message.set(Result(True, None, "Add session description"))
             return
 
-        # Special: leaving NOW takeaway capture ends the flow.
-        if self._view == View.NOW and self._input_state.form_type == FormType.TAKEAWAY and self._input_state.context_now_session_id is not None:
-            # Session is fully finished (after takeaway capture).
+        # Special: leaving NOW session description ends the flow.
+        if self._view == View.NOW and self._input_state.form_type == FormType.SESSION_DESCRIPTION and self._input_state.context_now_session_id is not None:
+            # Session is fully finished (after description capture).
             # If break was armed by a time-up finish, enter BREAK idle 05:00; otherwise reset to WORK idle.
             if self._now_state.maybe_prepare_break_idle():
                 self._message.set(Result(True, None, "Session complete. Break ready: press Space to start"))
@@ -713,28 +688,9 @@ class AppState:
             content = self._input_state.get_field_str(FormField.CONTENT).strip()
 
             # Generic add forms: empty title+content => exit without doing anything.
-            if self._input_state.form_type not in (FormType.TAKEAWAY, FormType.NOW_STAGE_UPDATE) and not title and not content:
+            if self._input_state.form_type not in (FormType.SESSION_DESCRIPTION, FormType.NOW_STAGE_UPDATE) and not title and not content:
                 self.cancel_input()
                 return
-
-            # Takeaway add (Timeline / NOW capture): empty content => exit without warning.
-            if self._input_state.form_type == FormType.TAKEAWAY and not content:
-                # If user provided a title but left content empty, treat title as content and save.
-                if title:
-                    self._input_state.set_field_str(FormField.CONTENT, title)
-                else:
-                    self.cancel_input()
-                    return
-
-        # Special: In NOW takeaway capture, Enter on empty content means "done recording".
-        if self._view == View.NOW and self._input_state.form_type == FormType.TAKEAWAY and self._input_state.context_now_session_id is not None:
-            if not self._input_state.get_field_str(FormField.CONTENT).strip():
-                # Same rule as above: title-only takeaway should be saved.
-                if self._input_state.get_field_str(FormField.TITLE).strip():
-                    self._input_state.set_field_str(FormField.CONTENT, self._input_state.get_field_str(FormField.TITLE).strip())
-                else:
-                    self.cancel_input()
-                    return
 
         result = self._input_state.confirm_input_action()
         self._message.set(result)
@@ -744,7 +700,7 @@ class AppState:
         if isinstance(result.data, int):
             created_id = result.data
 
-        # Special: after NOW stage update, refresh NOW cache and enter takeaway capture.
+        # Special: after NOW stage update, refresh NOW cache and enter session description.
         if self._view == View.NOW and self._input_state.form_type == FormType.NOW_STAGE_UPDATE and self._input_state.context_now_session_id is not None:
             # Refresh cached todo dict for NOW rendering.
             if self._now_state.current_todo_id is not None and self._now_state.current_project_id is not None and self._now_state.current_track_id is not None:
@@ -754,19 +710,25 @@ class AppState:
             self._ui_mode = UIMode.INPUT
             self._input_state.set_input_context(
                 input_purpose=InputPurpose.ADD,
-                form_type=FormType.TAKEAWAY,
-                current_item_id=None,
+                form_type=FormType.SESSION_DESCRIPTION,
+                current_item_id=session_id,
                 context_track_id=None,
                 context_project_id=self._now_state.current_project_id if self._now_state.current_todo_id is None else None,
                 context_todo_item_id=self._now_state.current_todo_id,
                 context_now_session_id=session_id,
             )
-            self._message.set(Result(True, None, "Add takeaways"))
+            self._message.set(Result(True, None, "Add session description"))
             return
 
-        # Special: Keep INPUT mode for continuous NOW takeaways.
-        if self._view == View.NOW and self._input_state.form_type == FormType.TAKEAWAY and self._input_state.context_now_session_id is not None:
-            self._input_state.reset_for_next_takeaway()
+        # Special: after NOW session description, end the finish-session flow.
+        if self._view == View.NOW and self._input_state.form_type == FormType.SESSION_DESCRIPTION and self._input_state.context_now_session_id is not None:
+            if self._now_state.maybe_prepare_break_idle():
+                self._message.set(Result(True, None, "Session complete. Break ready: press Space to start"))
+            else:
+                self._now_state.reset_timer()
+                self._message.set(Result(True, None, "Session complete"))
+            self._input_state.clear_input_context()
+            self._ui_mode = UIMode.NORMAL
             return
 
         # Default: Exit INPUT mode
