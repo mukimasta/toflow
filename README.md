@@ -10,8 +10,6 @@
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![TUI](https://img.shields.io/badge/Interface-TUI-purple.svg)](https://github.com/prompt-toolkit/python-prompt-toolkit)
-[![Iterations](https://img.shields.io/badge/Iterations-10%2B-orange.svg)](#architecture)
-[![Refactors](https://img.shields.io/badge/Major_Refactors-3-blue.svg)](./CHANGELOG.md)
 
 **English** | [简体中文](./README_zh.md)
 
