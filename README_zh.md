@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<img src="./docs/assets/logo.png" alt="ToFlow Logo" width="80%">
+<img src="./docs/assets/logo.png" alt="ToFlow Logo" width="100%">
 
 **Focus, Action, Growth. All inside your terminal.**
 
@@ -15,7 +15,7 @@
 
 ---
 
-<img src="./docs/assets/demo.gif" alt="ToFlow Demo" width="80%">
+<img src="./docs/assets/demo.gif" alt="ToFlow Demo" width="100%">
 
 </div>
 
