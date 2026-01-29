@@ -317,10 +317,21 @@ cli.py
 
 ### v0.1.0 2026-01-15 修复细节bug，优化体验，上线 github，改名为 ToFlow
 
+完成文档
 
 
+### v0.1.1 2026-01-29 增加 Structure Move 功能
 
+**新功能**：在 STRUCTURE 视图中按 `m` 键移动 Project 或 Todo
+- Project 可以移动到其他 Track
+- Todo 可以移动到其他 Project
+- 交互方式与 Box 移动一致（m → 导航 → Enter 确认）
+- 移动模式下提示消息持续显示
 
+**实现**：
+- `actions.py`：新增 `move_project_to_track()`
+- `app_state.py`：新增 `CONFIRM_STRUCTURE_MOVE`、`start_pending_move_from_structure()`、`get_pending_transfer_hint()`、`refresh_pending_transfer_hint()`
+- `app.py`：STRUCTURE 视图新增 `m` 键绑定，导航后刷新提示
 
 
 
@@ -329,7 +340,14 @@ cli.py
 
 1. URL 解析和跳转
 2. 记录 Done List
-3. NOW 行动器增加任务推荐功能 
+3. NOW 行动器增加任务推荐功能
 4. NOW 行动器增加 Pin Item 功能
 5. Model 中的local time字段去除，所有时间都使用 UTC 时间
-5. 中文输入法操作优化
+6. 中文输入法操作优化
+7. **架构重构：统一 Item 与 View 抽象**
+    - 统一 Track/Project/Todo/Idea/Session 为 `Item`，拥有共同接口（id, name, status, parent, children）
+    - 统一所有视图为 `ItemListView`（items + cursor + navigation）
+    - 统一操作为 `Action`（Move, Delete, Archive, StatusChange）
+    - 统一模式：Browse, SelectTarget, Input, Confirm
+    - 消息管理集中化（子状态返回结果，app_state 统一处理消息）
+    - 简化键绑定（navigate/confirm/cancel 根据 mode 委托给 app_state）

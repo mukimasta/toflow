@@ -12,6 +12,26 @@ All notable changes to this project will be documented in this file.
 4. NOW Actioner: Pin Item
 5. Remove local time fields in Model, use UTC for all times
 6. Chinese input method optimization
+7. **Architecture Refactor: Unified Item & View Abstraction**
+    - Unify Track/Project/Todo/Idea/Session as `Item` with common interface (id, name, status, parent, children)
+    - Unify all views as `ItemListView` (items + cursor + navigation)
+    - Unify operations as `Action` (Move, Delete, Archive, StatusChange)
+    - Unify modes: Browse, SelectTarget, Input, Confirm
+    - Centralized message management (sub-states return results, app_state handles messages)
+    - Simplify key bindings (navigate/confirm/cancel delegate to app_state based on mode)
+
+## [v0.1.1] - 2026-01-29 Structure Move
+
+**New Feature**: Move Project/Todo within STRUCTURE view (press `m`)
+- Project can be moved to another Track
+- Todo can be moved to another Project
+- Reuses the same interaction pattern as Box move (m → navigate → Enter to confirm)
+- Persistent hint message during move mode
+
+**Implementation**:
+- `actions.py`: Add `move_project_to_track()`
+- `app_state.py`: Add `CONFIRM_STRUCTURE_MOVE`, `start_pending_move_from_structure()`, `get_pending_transfer_hint()`, `refresh_pending_transfer_hint()`
+- `app.py`: Add `m` key binding for STRUCTURE view, refresh hint after navigation
 
 ## [v0.1.0] - 2026-01-15
 **Fix bugs, optimize experience, launch on GitHub, rename to ToFlow**

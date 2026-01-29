@@ -41,6 +41,7 @@ class ConfirmAction(Enum):
     ARCHIVE_BOX_ITEM = ("archive_box_item", "a")
     DELETE_BOX_ITEM = ("delete_box_item", "backspace")
     CONFIRM_BOX_TRANSFER = ("confirm_box_transfer", "enter")
+    CONFIRM_STRUCTURE_MOVE = ("confirm_structure_move", "enter")
     UNARCHIVE_ITEM = ("unarchive_item", "a")
     DELETE_ARCHIVE_ITEM = ("delete_archive_item", "backspace")
     DELETE_TIMELINE_ITEM = ("delete_timeline_item", "backspace")
@@ -178,8 +179,27 @@ class AppState:
     # == Box Transfer (v1) ==
 
     def has_pending_transfer(self) -> bool:
-        """Whether a BOX->STRUCTURE transfer is pending."""
+        """Whether a BOX->STRUCTURE or STRUCTURE->STRUCTURE transfer is pending."""
         return self._pending_transfer is not None
+
+    def get_pending_transfer_hint(self) -> str | None:
+        """Get the hint message for current pending transfer, or None if no transfer."""
+        if self._pending_transfer is None:
+            return None
+        kind = str(self._pending_transfer.get("kind") or "")
+        hints = {
+            "move_box_todo": "Move: select a project (→) or enter Todos level (→), then press Enter to confirm",
+            "promote_idea": "Promote: select a track, then press Enter to confirm",
+            "move_structure_project": "Move Project: select a track, then press Enter to confirm",
+            "move_structure_todo": "Move Todo: select a project (→), then press Enter to confirm",
+        }
+        return hints.get(kind)
+
+    def refresh_pending_transfer_hint(self) -> None:
+        """Refresh the hint message for pending transfer (call after navigation)."""
+        hint = self.get_pending_transfer_hint()
+        if hint:
+            self._message.set(Result(True, None, hint))
 
     def start_pending_move_from_box(self) -> None:
         """Start BOX todo move flow (BOX Todos -> select Project in STRUCTURE -> Enter confirm)."""
@@ -201,7 +221,7 @@ class AppState:
         }
         self._set_view(View.STRUCTURE)
         self._structure_state.reset_to_default_view()
-        self._message.set(Result(True, None, "Move: select a project (→) or enter Todos level (→), then press Enter to confirm"))
+        self.refresh_pending_transfer_hint()
 
     def start_pending_promote_from_box(self) -> None:
         """Start BOX idea promote flow (BOX Ideas -> select Track in STRUCTURE -> Enter confirm)."""
@@ -230,12 +250,23 @@ class AppState:
         }
         self._set_view(View.STRUCTURE)
         self._structure_state.reset_to_default_view()
-        self._message.set(Result(True, None, "Promote: select a track, then press Enter to confirm"))
+        self.refresh_pending_transfer_hint()
 
     def cancel_pending_transfer(self) -> None:
-        """Cancel a pending BOX transfer and return to BOX."""
+        """Cancel a pending BOX/STRUCTURE transfer."""
         if self._pending_transfer is None:
             return
+
+        kind = str(self._pending_transfer.get("kind") or "")
+
+        # Structure move: just clear state and stay in STRUCTURE
+        if kind in ("move_structure_project", "move_structure_todo"):
+            self._pending_transfer = None
+            self._structure_state.load_current_lists()
+            self._message.set(EmptyResult)
+            return
+
+        # BOX transfer: return to BOX view
         return_subview = self._pending_transfer.get("return_box_subview") or BoxSubview.TODOS
         # Exit special no-cursor TODOS confirm state (go back once).
         if self._structure_state.structure_level == StructureLevel.TODOS:
@@ -245,6 +276,33 @@ class AppState:
         self._box_state.set_subview(return_subview)
         self._box_state.load_box_lists()
         self._message.set(EmptyResult)
+
+    def start_pending_move_from_structure(self) -> None:
+        """Start STRUCTURE item move flow (Project → Track, Todo → Project)."""
+        if self._view != View.STRUCTURE:
+            return
+
+        item_type, track_id, project_id, todo_id = self._structure_state.get_selected_item_context()
+
+        if item_type == "project" and project_id is not None:
+            self._pending_transfer = {
+                "kind": "move_structure_project",
+                "item_id": project_id,
+            }
+            self._structure_state.reset_to_default_view()
+            self.refresh_pending_transfer_hint()
+            return
+
+        if item_type == "todo" and todo_id is not None:
+            self._pending_transfer = {
+                "kind": "move_structure_todo",
+                "item_id": todo_id,
+            }
+            self._structure_state.reset_to_default_view()
+            self.refresh_pending_transfer_hint()
+            return
+
+        self._message.set(Result(False, None, "Select a project or todo to move"))
 
     def confirm_pending_transfer_in_structure(self) -> None:
         """Confirm pending transfer in STRUCTURE (invoked by STRUCTURE Enter)."""
@@ -297,18 +355,43 @@ class AppState:
             self._box_state.load_box_lists()
             return
 
+        if kind == "move_structure_project":
+            item_type, target_track_id, _, _ = self._structure_state.get_selected_item_context()
+            if target_track_id is None:
+                self._message.set(Result(False, None, "Select a track first"))
+                return
+            result = actions.move_project_to_track(item_id, target_track_id)
+            self._message.set(result)
+            if result.success:
+                self._pending_transfer = None
+                self._structure_state.load_current_lists()
+            return
+
+        if kind == "move_structure_todo":
+            item_type, _, target_project_id, _ = self._structure_state.get_selected_item_context()
+            if target_project_id is None:
+                self._message.set(Result(False, None, "Select a project first"))
+                return
+            result = actions.move_todo_to_project(item_id, target_project_id)
+            self._message.set(result)
+            if result.success:
+                self._pending_transfer = None
+                self._structure_state.load_current_lists()
+            return
+
         self._message.set(Result(False, None, f"Unknown transfer kind: {kind}"))
 
 
     def handle_structure_right_for_transfer(self) -> None:
         """
-        Handle Right Arrow in STRUCTURE when a BOX transfer is pending.
+        Handle Right Arrow in STRUCTURE when a transfer is pending.
 
-        - For move_box_todo:
+        - For move_box_todo / move_structure_todo:
           - In TRACKS_WITH_PROJECTS_P level, Right Arrow enters TODOS level *without* selecting a todo,
             and shows a hint to press Enter to confirm.
           - Otherwise, fall back to normal select_current navigation.
-        - For promote_idea: always use normal select_current navigation.
+        - For promote_idea / move_structure_project:
+          - Stay at track level, enter confirm mode.
         """
         if self._view != View.STRUCTURE:
             return
@@ -317,17 +400,30 @@ class AppState:
             return
 
         kind = str(self._pending_transfer.get("kind") or "")
-        if kind == "move_box_todo" and self._structure_state.structure_level == StructureLevel.TRACKS_WITH_PROJECTS_P:
-            self._structure_state.select_current(enter_todos_level_without_cursor=True)
-            # Enter confirm mode immediately when entering TODOS level for move.
-            self.ask_confirm(ConfirmAction.CONFIRM_BOX_TRANSFER)
+
+        # move_box_todo / move_structure_todo: can confirm at project level or enter todos level
+        if kind in ("move_box_todo", "move_structure_todo"):
+            if self._structure_state.structure_level == StructureLevel.TRACKS_WITH_PROJECTS_P:
+                self._structure_state.select_current(enter_todos_level_without_cursor=True)
+                # Enter confirm mode immediately when entering TODOS level for move.
+                confirm_action = ConfirmAction.CONFIRM_STRUCTURE_MOVE if kind == "move_structure_todo" else ConfirmAction.CONFIRM_BOX_TRANSFER
+                self.ask_confirm(confirm_action)
+                return
+            # Otherwise navigate normally but keep hint
+            self._structure_state.select_current()
+            self.refresh_pending_transfer_hint()
             return
 
-        if kind == "promote_idea":
-            # Promote must stay at TRACKS_WITH_PROJECTS_T; do not enter project list.
-            if self._structure_state.structure_level != StructureLevel.TRACKS_WITH_PROJECTS_T:
-                self._structure_state.reset_to_default_view()
-            self.ask_confirm(ConfirmAction.CONFIRM_BOX_TRANSFER)
+        # promote_idea / move_structure_project: confirm at track level
+        if kind in ("promote_idea", "move_structure_project"):
+            # Can navigate to see tracks, but confirm happens at track level
+            if self._structure_state.structure_level == StructureLevel.TRACKS_WITH_PROJECTS_T:
+                confirm_action = ConfirmAction.CONFIRM_STRUCTURE_MOVE if kind == "move_structure_project" else ConfirmAction.CONFIRM_BOX_TRANSFER
+                self.ask_confirm(confirm_action)
+                return
+            # Navigate normally but keep hint
+            self._structure_state.select_current()
+            self.refresh_pending_transfer_hint()
             return
 
         self._structure_state.select_current()

@@ -643,6 +643,19 @@ def unarchive_project(project_id: int) -> Result:
     return Result(True, None, f"Project '{project_name}' unarchived")
 
 
+def move_project_to_track(project_id: int, track_id: int) -> Result:
+    '''Move a project to another track. Result.data: project_id'''
+    with db_session() as session:
+        project = session.query(Project).filter_by(id=project_id).first()
+        if not project:
+            return Result(False, None, f"Project {project_id} not found")
+
+        project_name = project.name
+        project.track_id = track_id
+
+    return Result(True, project_id, f"Project '{project_name}' moved")
+
+
 # def reorder ...
 def move_project_order(project_id: int, direction: int) -> Result:
     """Alt+↑/↓: swap order_index with neighbor (Projects within a track)."""

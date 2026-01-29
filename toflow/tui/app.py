@@ -153,9 +153,14 @@ def run():
     @kb.add("up", filter=is_normal_mode & is_structure_view)
     def _(event):
         state.structure_state.move_cursor(-1)
+        if state.has_pending_transfer():
+            state.refresh_pending_transfer_hint()
+
     @kb.add("down", filter=is_normal_mode & is_structure_view)
     def _(event):
         state.structure_state.move_cursor(1)
+        if state.has_pending_transfer():
+            state.refresh_pending_transfer_hint()
 
     @_safe_add("m-up", fallback_keys=("escape", "up"), filter=is_normal_mode & is_structure_view)
     def _(event):
@@ -173,6 +178,8 @@ def run():
     @kb.add("left", filter=is_normal_mode & is_structure_view)
     def _(event):
         state.structure_state.go_back()
+        if state.has_pending_transfer():
+            state.refresh_pending_transfer_hint()
 
     @kb.add("i", filter=is_normal_mode & is_structure_view)
     def _(event):
@@ -222,10 +229,21 @@ def run():
     def _(event):
         state.ask_confirm(ConfirmAction.ARCHIVE_STRUCTURE_ITEM)
 
+    @kb.add("m", filter=is_normal_mode & is_structure_view)
+    def _(event):
+        if state.has_pending_transfer():
+            return  # Already in move mode, ignore
+        state.start_pending_move_from_structure()
+
     @kb.add("enter", filter=is_normal_mode & is_structure_view)
     def _(event):
         if state.has_pending_transfer():
-            state.ask_confirm(ConfirmAction.CONFIRM_BOX_TRANSFER)
+            # Determine which confirm action based on transfer kind
+            kind = state._pending_transfer.get("kind") if state._pending_transfer else ""
+            if kind in ("move_structure_project", "move_structure_todo"):
+                state.ask_confirm(ConfirmAction.CONFIRM_STRUCTURE_MOVE)
+            else:
+                state.ask_confirm(ConfirmAction.CONFIRM_BOX_TRANSFER)
             return
         state.ask_confirm(ConfirmAction.ENTER_NOW_WITH_STRUCTURE_ITEM)
 
@@ -472,6 +490,7 @@ def run():
         ConfirmAction.ARCHIVE_BOX_ITEM: lambda e: state.box_state.archive_selected_item(),
         ConfirmAction.ENTER_NOW_WITH_STRUCTURE_ITEM: lambda e: state.enter_now_with_structure_item(),
         ConfirmAction.CONFIRM_BOX_TRANSFER: lambda e: state.confirm_pending_transfer_in_structure(),
+        ConfirmAction.CONFIRM_STRUCTURE_MOVE: lambda e: state.confirm_pending_transfer_in_structure(),
         ConfirmAction.FINISH_SESSION: _confirm_finish_session,
         ConfirmAction.UNARCHIVE_ITEM: lambda e: state.unarchive_item_and_maybe_jump(),
         ConfirmAction.DELETE_ARCHIVE_ITEM: lambda e: state.archive_state.delete_selected_item(),
