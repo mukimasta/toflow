@@ -19,7 +19,12 @@ class _SubmissionFailed(Exception):
 class FormService:
     """Coordinates form session construction and persistence."""
 
-    def build_add_session(self, entity_type: EntityType, parent_id: int | None = None) -> InputSession | None:
+    def build_add_session(
+        self,
+        entity_type: EntityType,
+        parent_id: int | None = None,
+        insert_after_id: int | None = None,
+    ) -> InputSession | None:
         fields = self._get_editable_fields(entity_type)
         if not fields:
             return None
@@ -30,6 +35,7 @@ class FormService:
             entity_type=entity_type,
             entity_id=None,
             parent_id=parent_id,
+            insert_after_id=insert_after_id,
             form=form,
         )
 
@@ -67,6 +73,7 @@ class FormService:
 
     def _submit_add(self, session: InputSession) -> Result:
         form = session.form
+        form.sync_text_values()
         values = dict(form.values)
         title = str(values.pop("title", "")).strip()
         if not title:
@@ -97,7 +104,12 @@ class FormService:
 
         try:
             with db_session() as s:
-                created = create_entity(s, session.entity_type, **payload)
+                created = create_entity(
+                    s,
+                    session.entity_type,
+                    insert_after_id=session.insert_after_id,
+                    **payload,
+                )
                 self._ensure_success(created)
 
                 if (

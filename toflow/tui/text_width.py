@@ -48,3 +48,37 @@ def truncate_text(text: str, max_width: int, ellipsis: str = "…") -> str:
         return take_by_width(ellipsis, max_width)
 
     return take_by_width(text, max_width - ellipsis_w) + ellipsis
+
+
+def wrap_text_lines(text: str, max_width: int) -> list[tuple[int, int]]:
+    """Split text into wrapped display lines as (start, end) char index ranges.
+
+    Wrapping is by terminal column width, not code-point count. A single
+    oversized glyph occupies its own line. Empty text yields one empty line.
+    """
+    width = max(1, max_width)
+    if not text:
+        return [(0, 0)]
+
+    lines: list[tuple[int, int]] = []
+    start = 0
+    used = 0
+    i = 0
+    n = len(text)
+    while i < n:
+        w = char_width(text[i])
+        if used > 0 and used + w > width:
+            lines.append((start, i))
+            start = i
+            used = 0
+            continue
+        if used == 0 and w > width:
+            lines.append((i, i + 1))
+            i += 1
+            start = i
+            used = 0
+            continue
+        used += w
+        i += 1
+    lines.append((start, n))
+    return lines

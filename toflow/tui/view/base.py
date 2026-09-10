@@ -115,6 +115,19 @@ class View(ABC):
     def add_parent_id(self) -> int | None:
         return None
 
+    def add_insert_after_id(self) -> int | None:
+        """Sibling id to insert after when adding, or None to append.
+
+        Only returns a selection when the new entity is the same type as the
+        view's entity (true sibling). Cross-type adds (e.g. project under a
+        selected track) append within the new parent scope.
+        """
+        if self.add_entity_type() != self.entity_type:
+            return None
+        if not supports_protocol(self.entity_type, "Orderable"):
+            return None
+        return self.selected_id()
+
     def move_context(self):
         return None
 

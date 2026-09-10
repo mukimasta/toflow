@@ -15,8 +15,8 @@ from toflow.registry import (
 )
 
 
-def next_order_index(session: DBSession, entity_type: EntityType, parent_id: int | None) -> int:
-    """Compute next order_index for new entity in scope. parent_id=None for Box items (filter by parent_field IS NULL)."""
+def _sibling_query(session: DBSession, entity_type: EntityType, parent_id: int | None):
+    """Query non-archived siblings in the same parent scope."""
     model_cls = get_model_class(entity_type)
     parent_field = get_parent_field(entity_type)
 
@@ -28,8 +28,12 @@ def next_order_index(session: DBSession, entity_type: EntityType, parent_id: int
             q = q.filter(getattr(model_cls, parent_field).is_(None))
     if supports_protocol(entity_type, "Archivable"):
         q = q.filter(getattr(model_cls, "archived_at_utc").is_(None))
+    return q.order_by(getattr(model_cls, "order_index").asc().nulls_last(), model_cls.id)
 
-    items = q.order_by(getattr(model_cls, "order_index").asc().nulls_last(), model_cls.id).all()
+
+def next_order_index(session: DBSession, entity_type: EntityType, parent_id: int | None) -> int:
+    """Compute next order_index for new entity in scope. parent_id=None for Box items (filter by parent_field IS NULL)."""
+    items = _sibling_query(session, entity_type, parent_id).all()
     max_idx = -1
     for it in items:
         idx = getattr(it, "order_index", None)
@@ -38,15 +42,79 @@ def next_order_index(session: DBSession, entity_type: EntityType, parent_id: int
     return max_idx + 1
 
 
-def create_entity(session: DBSession, entity_type: EntityType, **fields: Any) -> Result:
-    """Create entity. Result.data: entity id. Handles order_index."""
+def order_index_after(
+    session: DBSession,
+    entity_type: EntityType,
+    parent_id: int | None,
+    after_id: int | None,
+) -> int:
+    """Return order_index for a new sibling inserted after ``after_id``.
+
+    Shifts later siblings up by one. Falls back to append-at-end when
+    ``after_id`` is missing or not a sibling in this scope.
+    """
+    if after_id is None:
+        return next_order_index(session, entity_type, parent_id)
+
+    model_cls = get_model_class(entity_type)
+    after = session.get(model_cls, after_id)
+    if after is None:
+        return next_order_index(session, entity_type, parent_id)
+
+    parent_field = get_parent_field(entity_type)
+    if parent_field is not None:
+        after_parent = getattr(after, parent_field, None)
+        if after_parent != parent_id:
+            return next_order_index(session, entity_type, parent_id)
+
+    siblings = _sibling_query(session, entity_type, parent_id).all()
+    # Normalize gaps so insert position is stable.
+    for idx, it in enumerate(siblings):
+        if getattr(it, "order_index", None) != idx:
+            it.order_index = idx
+
+    after_idx = None
+    for it in siblings:
+        if it.id == after_id:
+            after_idx = int(it.order_index)
+            break
+    if after_idx is None:
+        return next_order_index(session, entity_type, parent_id)
+
+    for it in siblings:
+        idx = int(getattr(it, "order_index", 0) or 0)
+        if idx > after_idx:
+            it.order_index = idx + 1
+
+    return after_idx + 1
+
+
+def create_entity(
+    session: DBSession,
+    entity_type: EntityType,
+    *,
+    insert_after_id: int | None = None,
+    **fields: Any,
+) -> Result:
+    """Create entity. Result.data: entity id. Handles order_index.
+
+    When ``insert_after_id`` is set (TUI add with selection), the new entity
+    is ordered as the next sibling after that id. CLI callers omit it and
+    keep append-at-end behavior.
+    """
     model_cls = get_model_class(entity_type)
 
     pf = get_parent_field(entity_type)
     parent_id = fields.get(pf) if pf else None
 
     if supports_protocol(entity_type, "Orderable"):
-        fields = {**fields, "order_index": next_order_index(session, entity_type, parent_id)}
+        if "order_index" not in fields:
+            fields = {
+                **fields,
+                "order_index": order_index_after(
+                    session, entity_type, parent_id, insert_after_id
+                ),
+            }
 
     valid_cols = {c.key for c in model_cls.__table__.columns}
     filtered = {k: v for k, v in fields.items() if k in valid_cols}

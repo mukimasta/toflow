@@ -6,6 +6,9 @@ import calendar
 from datetime import date, datetime, timezone
 from typing import Any
 
+from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.selection import SelectionType
+
 from toflow.models import FieldSpec
 from toflow.utils import as_utc_aware
 from toflow.tui.input.intent import InputIntent
@@ -21,8 +24,8 @@ from toflow.tui.input.widgets import (
 class InputForm:
     """Generic multi-field form driven by FieldSpec list.
 
-    Pure data + cursor logic. No database, no prompt-toolkit dependency.
-    Handles text editing, date segment editing, and chip cycling.
+    Pure data + cursor logic. No database access.
+    Text fields use prompt_toolkit Buffer for editing; other widgets stay custom.
     """
 
     def __init__(
@@ -44,7 +47,7 @@ class InputForm:
                     self.values[spec.field] = ""
 
         self.cursor: int = 0
-        self.text_cursor: int = 0  # cursor position within text field
+        self._buffers: dict[str, Buffer] = {}
         self.date_segment: int = 0  # 0=year, 1=month, 2=day
         self._date_typing: str = ""  # digit buffer for current segment
         self._date_preview: dict[str, str] = {}  # visible date draft, e.g. "202_-__-__"
@@ -63,6 +66,11 @@ class InputForm:
         for spec in self.fields:
             if spec.field not in self.values:
                 self.values[spec.field] = self._default_value(spec)
+            if spec.widget == "text":
+                buf = Buffer(multiline=False)
+                buf.text = self.get_value_str(spec.field)
+                buf.cursor_position = len(buf.text)
+                self._buffers[spec.field] = buf
             if spec.widget == "stage":
                 self.values["current_stage"] = self._coerce_int(self.values.get("current_stage"), 0)
                 self.values["total_stages"] = max(1, self._coerce_int(self.values.get("total_stages"), 1))
@@ -82,7 +90,13 @@ class InputForm:
     def _widget(self, spec: FieldSpec):
         return self._widgets.get(self._widget_key(spec), self._widgets["text"])
 
-    def handle_intent(self, intent: InputIntent, payload: str = "") -> None:
+    def handle_intent(
+        self,
+        intent: InputIntent,
+        payload: str = "",
+        *,
+        shift: bool = False,
+    ) -> None:
         if intent == InputIntent.FIELD_NEXT:
             self.move(1)
             return
@@ -92,10 +106,20 @@ class InputForm:
         spec = self.current_spec()
         if spec is None:
             return
-        self._widget(spec).handle(self, spec, intent, payload)
+        self._widget(spec).handle(self, spec, intent, payload, shift=shift)
 
-    def render_row(self, spec: FieldSpec, *, active: bool, prefix: str, label: str):
-        return self._widget(spec).render_row(self, spec, active=active, prefix=prefix, label=label)
+    def render_row(
+        self,
+        spec: FieldSpec,
+        *,
+        active: bool,
+        prefix: str,
+        label: str,
+        value_width: int = 40,
+    ):
+        return self._widget(spec).render_row(
+            self, spec, active=active, prefix=prefix, label=label, value_width=value_width
+        )
 
     def render_chip(self, spec: FieldSpec, *, active: bool):
         return self._widget(spec).render_chip(self, spec, active=active)
@@ -142,6 +166,9 @@ class InputForm:
     # -- Value access --
 
     def get_value_str(self, field: str) -> str:
+        buf = self._buffers.get(field)
+        if buf is not None:
+            return buf.text
         v = self.values.get(field)
         if v is None:
             return ""
@@ -150,44 +177,121 @@ class InputForm:
     def set_value(self, field: str, value: Any) -> None:
         self.values[field] = value
 
-    # -- Inline text editing --
+    # -- Inline text editing (prompt_toolkit Buffer) --
+
+    def active_text_buffer(self) -> Buffer | None:
+        spec = self.current_spec()
+        if spec is None or not self.is_text_field(spec):
+            return None
+        return self._buffers.get(spec.field)
+
+    def text_buffer(self, field: str) -> Buffer | None:
+        return self._buffers.get(field)
+
+    @property
+    def text_cursor(self) -> int:
+        buf = self.active_text_buffer()
+        return buf.cursor_position if buf is not None else 0
+
+    def sync_text_values(self) -> None:
+        """Copy Buffer contents back into values dict."""
+        for field, buf in self._buffers.items():
+            self.values[field] = buf.text
+
+    def _flush_active_text_buffer(self) -> None:
+        spec = self.current_spec()
+        if spec is None or not self.is_text_field(spec):
+            return
+        buf = self._buffers.get(spec.field)
+        if buf is not None:
+            self.values[spec.field] = buf.text
+
+    @staticmethod
+    def _clear_selection(buf: Buffer) -> None:
+        if buf.selection_state is not None:
+            buf.cut_selection()
 
     def insert_char(self, char: str) -> None:
-        """Insert character at text cursor position."""
-        spec = self.current_spec()
-        if spec is None or not self.is_text_field(spec):
+        buf = self.active_text_buffer()
+        if buf is None:
             return
-        value = self.get_value_str(spec.field)
-        pos = min(self.text_cursor, len(value))
-        self.values[spec.field] = value[:pos] + char + value[pos:]
-        self.text_cursor = pos + len(char)
+        self._clear_selection(buf)
+        buf.insert_text(char)
 
     def delete_back(self) -> None:
-        """Delete character before text cursor (backspace)."""
-        spec = self.current_spec()
-        if spec is None or not self.is_text_field(spec):
+        buf = self.active_text_buffer()
+        if buf is None:
             return
-        value = self.get_value_str(spec.field)
-        pos = min(self.text_cursor, len(value))
-        if pos > 0:
-            self.values[spec.field] = value[:pos - 1] + value[pos:]
-            self.text_cursor = pos - 1
+        if buf.selection_state is not None:
+            buf.cut_selection()
+            return
+        if buf.cursor_position > 0:
+            buf.delete_before_cursor(count=1)
 
-    def move_text_cursor(self, delta: int) -> None:
-        """Move text cursor left/right within current field."""
-        spec = self.current_spec()
-        if spec is None or not self.is_text_field(spec):
+    def move_text_cursor(self, delta: int, *, shift: bool = False) -> None:
+        buf = self.active_text_buffer()
+        if buf is None:
             return
-        value = self.get_value_str(spec.field)
-        self.text_cursor = max(0, min(self.text_cursor + delta, len(value)))
+        if shift:
+            if buf.selection_state is None:
+                buf.start_selection(SelectionType.CHARACTERS)
+        else:
+            buf.exit_selection()
+        buf.cursor_position = max(0, min(buf.cursor_position + delta, len(buf.text)))
+
+    def move_text_word(self, delta: int, *, shift: bool = False) -> None:
+        buf = self.active_text_buffer()
+        if buf is None:
+            return
+        doc = buf.document
+        if delta < 0:
+            rel = doc.find_previous_word_beginning(count=1)
+            new_pos = 0 if rel is None else buf.cursor_position + rel
+        else:
+            rel = doc.find_next_word_ending(count=1)
+            new_pos = len(buf.text) if rel is None else buf.cursor_position + rel
+        if shift:
+            if buf.selection_state is None:
+                buf.start_selection(SelectionType.CHARACTERS)
+        else:
+            buf.exit_selection()
+        buf.cursor_position = max(0, min(new_pos, len(buf.text)))
+
+    def move_text_line_edge(self, *, end: bool, shift: bool = False) -> None:
+        """Move to start (end=False) or end (end=True) of the text field."""
+        buf = self.active_text_buffer()
+        if buf is None:
+            return
+        if shift:
+            if buf.selection_state is None:
+                buf.start_selection(SelectionType.CHARACTERS)
+        else:
+            buf.exit_selection()
+        buf.cursor_position = len(buf.text) if end else 0
+
+    def paste_text(self, text: str) -> None:
+        buf = self.active_text_buffer()
+        if buf is None or not text:
+            return
+        cleaned = (
+            text.replace("\r\n", " ")
+            .replace("\n", " ")
+            .replace("\r", " ")
+            .replace("\t", " ")
+        )
+        self._clear_selection(buf)
+        buf.insert_text(cleaned)
 
     def _sync_field_cursor(self) -> None:
         """Reset cursor state when switching fields."""
+        self._flush_active_text_buffer()
         spec = self.current_spec()
         if spec and self.is_text_field(spec):
-            self.text_cursor = len(self.get_value_str(spec.field))
-        else:
-            self.text_cursor = 0
+            buf = self._buffers.get(spec.field)
+            if buf is not None:
+                # Buffer is source of truth for text fields; just place cursor.
+                buf.cursor_position = len(buf.text)
+                buf.exit_selection()
         self.date_segment = 0
         self._date_typing = ""
         self.stage_segment = 0
@@ -411,6 +515,7 @@ class InputForm:
 
     def to_updates(self) -> dict[str, Any]:
         """Return only changed fields (vs original). Treats '' and None as equivalent."""
+        self.sync_text_values()
         updates: dict[str, Any] = {}
         for spec in self.fields:
             if spec.widget == "stage":

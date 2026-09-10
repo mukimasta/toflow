@@ -162,7 +162,16 @@ def render_status(
     return [("class:dim", f"  {status_hint}")]
 
 
-def render_input_form_lines(form: InputForm, mode_label: str = "EDIT", entity_label: str = "") -> Lines:
+FORM_LABEL_W = 12
+
+
+def render_input_form_lines(
+    form: InputForm,
+    mode_label: str = "EDIT",
+    entity_label: str = "",
+    *,
+    width: int = 80,
+) -> Lines:
     """Render multi-field form as a clean vertical list.
 
      Edit Project
@@ -170,8 +179,10 @@ def render_input_form_lines(form: InputForm, mode_label: str = "EDIT", entity_la
        Desc        Daily work
        Deadline    2025-03-01
        Will ▅      Imp █       Urg ▂
+
+    Long text fields wrap within the terminal width (continuation lines
+    indent under the value column).
     """
-    LABEL_W = 12
     header = f" {mode_label} {entity_label}".strip()
     lines: Lines = []
 
@@ -187,13 +198,16 @@ def render_input_form_lines(form: InputForm, mode_label: str = "EDIT", entity_la
         else:
             text_fields.append((i, spec))
 
-    # -- Text/date field rows (one per line) --
+    # -- Text/date field rows (text may wrap to multiple lines) --
     for i, spec in text_fields:
         is_active = i == form.cursor
         prefix = " ▸ " if is_active else "   "
-        label = spec.label.ljust(LABEL_W)
-        line = form.render_row(spec, active=is_active, prefix=prefix, label=label)
-        lines.append(line)
+        label = spec.label.ljust(FORM_LABEL_W)
+        value_width = max(1, width - text_width(prefix) - text_width(label))
+        row_lines = form.render_row(
+            spec, active=is_active, prefix=prefix, label=label, value_width=value_width
+        )
+        lines.extend(row_lines)
 
     # -- Chip fields row (grouped on one line) --
     if chip_fields:
@@ -240,6 +254,7 @@ APP_STYLE = Style.from_dict({
     "form.value": "",
     "form.value.active": "reverse",
     "form.cursor": "reverse",
+    "form.selection": "reverse ansicyan",
     "hint.0": "ansibrightblack",
     "hint.1": "ansicyan",
     "hint.2": "ansiyellow",

@@ -24,3 +24,4 @@ class InputSession:
     form: InputForm
     entity_id: int | None = None
     parent_id: int | None = None
+    insert_after_id: int | None = None

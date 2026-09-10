@@ -18,3 +18,12 @@ wheels/
 
 # Other
 scripts/
+.DS_Store
+docs/assets/1.png
+docs/assets/2.png
+docs/assets/3.png
+docs/assets/a.png
+docs/assets/b.png
+docs/assets/c.png
+docs/assets/combine_images.py
+docs/assets/d.png

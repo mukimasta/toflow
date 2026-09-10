@@ -71,13 +71,15 @@ def run() -> None:
             rows, cols = 24, 80
 
         reserved = 2 if _is_zen_layout() else 3  # separator + status (+ title if not zen)
-        if state.ui_mode == UIMode.INPUT and state.has_form:
-            form = state.form
-            if form:
-                # header + text field lines + chip line (if any)
-                text_count = sum(1 for s in form.fields if s.widget not in ("chip", "select"))
-                chip_count = sum(1 for s in form.fields if s.widget in ("chip", "select"))
-                reserved += 1 + text_count + (1 if chip_count else 0)
+        if state.ui_mode == UIMode.INPUT and state.has_form and state.input_session is not None:
+            session = state.input_session
+            form_lines = render_input_form_lines(
+                session.form,
+                mode_label=session.mode_label,
+                entity_label=session.entity_type.value.title(),
+                width=cols,
+            )
+            reserved += max(1, len(form_lines))
         vh = max(1, rows - reserved)
 
         pane = state.current_view.pane
@@ -99,12 +101,19 @@ def run() -> None:
 
     def get_status_content() -> list[tuple[str, str]]:
         if state.ui_mode == UIMode.INPUT:
-            return [("class:dim", "  [Tab] next  [Space/←/→] segment  [=/-] adjust  [digits] direct input  [Backspace] clear-segment  [Enter] ok  [Esc] cancel")]
+            return [("class:dim", "  [Tab] next  [←/→] move  [Ctrl/⌥←→] word  [Shift] select  [Ctrl+V] paste  [=/-] adjust  [Enter] ok  [Esc] cancel")]
         return render_status(
             is_confirm=state.ui_mode == UIMode.CONFIRM,
             last_result=state.last_result,
             status_hint=state.current_view.status_hint,
         )
+
+    def _terminal_cols() -> int:
+        try:
+            from prompt_toolkit.application.current import get_app
+            return get_app().output.get_size().columns
+        except Exception:
+            return 80
 
     def get_form_content() -> list[tuple[str, str]]:
         session = state.input_session
@@ -114,6 +123,7 @@ def run() -> None:
             session.form,
             mode_label=session.mode_label,
             entity_label=session.entity_type.value.title(),
+            width=_terminal_cols(),
         )
         return flatten(lines)
 
@@ -206,6 +216,7 @@ def run() -> None:
         session = form_service.build_add_session(
             state.current_view.add_entity_type(),
             state.current_view.add_parent_id(),
+            state.current_view.add_insert_after_id(),
         )
         if session is not None:
             state.start_input(session)
@@ -353,6 +364,31 @@ def run() -> None:
         if form is not None:
             form.handle_intent(InputIntent.FIELD_PREV)
 
+    def _read_clipboard_text(event) -> str:
+        """Best-effort clipboard read for Ctrl+V (prompt_toolkit, then macOS pbpaste)."""
+        try:
+            data = event.app.clipboard.get_data()
+            text = getattr(data, "text", None)
+            if text:
+                return text
+        except Exception:
+            pass
+        try:
+            import subprocess
+
+            result = subprocess.run(
+                ["pbpaste"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=0.5,
+            )
+            if result.returncode == 0 and result.stdout:
+                return result.stdout
+        except Exception:
+            pass
+        return ""
+
     @kb.add("left", filter=is_input)
     def _form_cursor_left(event):
         form = state.form
@@ -366,6 +402,100 @@ def run() -> None:
         if form is None:
             return
         form.handle_intent(InputIntent.SEG_NEXT)
+
+    @kb.add("s-left", filter=is_input)
+    def _form_select_left(event):
+        form = state.form
+        if form is None:
+            return
+        form.handle_intent(InputIntent.SEG_PREV, shift=True)
+
+    @kb.add("s-right", filter=is_input)
+    def _form_select_right(event):
+        form = state.form
+        if form is None:
+            return
+        form.handle_intent(InputIntent.SEG_NEXT, shift=True)
+
+    @kb.add("c-left", filter=is_input)
+    @kb.add("escape", "left", filter=is_input)
+    @kb.add("escape", "b", filter=is_input)
+    def _form_word_left(event):
+        form = state.form
+        if form is None:
+            return
+        form.handle_intent(InputIntent.WORD_PREV)
+
+    @kb.add("c-right", filter=is_input)
+    @kb.add("escape", "right", filter=is_input)
+    @kb.add("escape", "f", filter=is_input)
+    def _form_word_right(event):
+        form = state.form
+        if form is None:
+            return
+        form.handle_intent(InputIntent.WORD_NEXT)
+
+    @kb.add("c-s-left", filter=is_input)
+    def _form_select_word_left(event):
+        form = state.form
+        if form is None:
+            return
+        form.handle_intent(InputIntent.WORD_PREV, shift=True)
+
+    @kb.add("c-s-right", filter=is_input)
+    def _form_select_word_right(event):
+        form = state.form
+        if form is None:
+            return
+        form.handle_intent(InputIntent.WORD_NEXT, shift=True)
+
+    @kb.add("c-a", filter=is_input)
+    @kb.add("home", filter=is_input)
+    def _form_line_home(event):
+        form = state.form
+        if form is None:
+            return
+        form.handle_intent(InputIntent.LINE_HOME)
+
+    @kb.add("c-e", filter=is_input)
+    @kb.add("end", filter=is_input)
+    def _form_line_end(event):
+        form = state.form
+        if form is None:
+            return
+        form.handle_intent(InputIntent.LINE_END)
+
+    @kb.add("s-home", filter=is_input)
+    def _form_select_line_home(event):
+        form = state.form
+        if form is None:
+            return
+        form.handle_intent(InputIntent.LINE_HOME, shift=True)
+
+    @kb.add("s-end", filter=is_input)
+    def _form_select_line_end(event):
+        form = state.form
+        if form is None:
+            return
+        form.handle_intent(InputIntent.LINE_END, shift=True)
+
+    @kb.add("c-v", filter=is_input)
+    def _form_paste_clipboard(event):
+        form = state.form
+        if form is None:
+            return
+        text = _read_clipboard_text(event)
+        if text:
+            form.handle_intent(InputIntent.PASTE, text)
+
+    @kb.add("<bracketed-paste>", filter=is_input)
+    def _form_bracketed_paste(event):
+        form = state.form
+        if form is None:
+            return
+        payload = event.data or ""
+        if payload:
+            form.handle_intent(InputIntent.PASTE, payload)
 
     @kb.add("backspace", filter=is_input)
     def _form_backspace(event):
@@ -402,7 +532,11 @@ def run() -> None:
         if form is None:
             return
         char = event.data
-        if not char or len(char) != 1:
+        if not char:
+            return
+        # Multi-char payloads (some paste paths) go through PASTE.
+        if len(char) > 1:
+            form.handle_intent(InputIntent.PASTE, char)
             return
         form.handle_intent(InputIntent.CHAR, char)
 
@@ -429,12 +563,16 @@ def run() -> None:
 
     # Form input display (inline editing via FormattedTextControl)
     def _get_form_height() -> int:
-        form = state.form
-        if form is None:
+        session = state.input_session
+        if session is None:
             return 1
-        text_count = sum(1 for s in form.fields if s.widget not in ("chip", "select"))
-        chip_count = sum(1 for s in form.fields if s.widget in ("chip", "select"))
-        return 1 + text_count + (1 if chip_count else 0)  # header + field rows
+        lines = render_input_form_lines(
+            session.form,
+            mode_label=session.mode_label,
+            entity_label=session.entity_type.value.title(),
+            width=_terminal_cols(),
+        )
+        return max(1, len(lines))
 
     form_display = ConditionalContainer(
         Window(
